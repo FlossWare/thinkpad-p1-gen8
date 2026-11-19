@@ -70,7 +70,7 @@ Full details, install layout, and the two mandatory workarounds:
 - NPUW KV cache is **FP16** — verified by source inspection
   (`choose_kv_cache_storage_type()` default; `NPUW_LLM_OPTIMIZE_FP8=false`), not
   inferred from the INT4 weights. Activations are converted bf16→f16 model-wide.
-- Per-step top-1-logprob drift: mean ≤ 0.04, max 0.15, cosine ≥ 0.9993.
+- Per-step top-1-logprob drift: mean |ΔlogP| ≤ 0.04, max ≤ 0.15 per step; cosine similarity over the 16-step top-1 logprob vectors (CPU vs NPU) ≥ 0.9993 — **not** full-vocabulary logit cosine (see [docs/correctness.md](docs/correctness.md)). Full-vocabulary logit comparison exists only on the separate manual static-blob fallback path (0.9916, measured 2026-11-18).
 - Prompts longer than `MAX_PROMPT_LEN` are cleanly rejected (no silent truncation).
 
 ### Serving ([docs/serving.md](docs/serving.md))

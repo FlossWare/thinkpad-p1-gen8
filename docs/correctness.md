@@ -62,7 +62,9 @@ Each step re-prefills prompt+generated and records that step's top-1 logprob
 (`logit − logsumexp(vocab)`). Continuous-greedy equivalence was confirmed implicitly:
 stepwise token choices matched the continuous sequences for all three prompts.
 
-| Prompt | Steps | Mean \|ΔlogP\| | Max \|ΔlogP\| | Cosine |
+The "cosine" column below is **cosine similarity over the two 16-element vectors of per-step top-1 log-probabilities** (log P of the greedy token at each step, 16 steps, CPU vs NPU) — **not** full-vocabulary logit cosine. See Limitations for the separate full-logit metric, which exists only on the manual static-blob fallback path.
+
+| Prompt | Steps | Mean \|ΔlogP\| | Max \|ΔlogP\| | Cosine similarity (16-step top-1 logprob vectors, CPU vs NPU) |
 |---|---|---|---|---|
 | short-geography | 16 | 0.0206 | 0.0702 | 0.99956 |
 | repeated-token | 16 | 0.0365 | 0.1489 | 0.99929 |
@@ -89,9 +91,12 @@ it. The repeated-token prompt shows the largest, matching the argmax-flip above.
   `EncodedResults.scores` is a sequence **sum** under greedy decoding). Per-step
   numerical comparison is therefore on top-1 logprobs only; top-5 agreement is not
   measurable through `LLMPipeline`.
-- Direct logit-level NPU-vs-CPU comparison exists only via the manual static-blob
-  fallback path: last-token argmax match and logit cosine 0.9916 (measured
-  2026-11-18, `~/AI/ovfix-static-blob/compare*.py`).
+- Direct full-vocabulary logit-level NPU-vs-CPU comparison exists only via the
+  **separate manual static-blob fallback path** (not NPUW): last-token argmax match
+  and **full-vocabulary logit cosine similarity 0.9916** (measured 2026-11-18,
+  `~/AI/ovfix-static-blob/compare*.py`). This is a different path and a different
+  metric from the 16-step top-1-logprob cosine similarities above — token agreement,
+  top-1-logprob drift, and full-logit similarity are three distinct measures.
 - RoPE/RMSNorm/softmax op-level precision was not instrumented (would require source
   patches, out of scope per project rules); the f16 activation conversion applies
   model-wide as cited above.
