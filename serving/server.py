@@ -30,6 +30,10 @@ Ordering semantics (issue #4)
   for any earlier-ticketed generation for that session (whether queued or
   in-flight) to finish and *then* clears the history.  It is never
   interleaved with a generation and never rejected with 409.
+* At most ``MAX_SESSION_PENDING`` (8) operations may hold or wait for one
+  session's gate; further ``/generate`` or ``/reset`` calls for that session
+  are rejected immediately with HTTP 429 (no ticket taken, nothing mutated),
+  so same-session floods cannot bypass the bounded queue.
 
 Queueing and validation (issue #7)
 ----------------------------------
@@ -55,7 +59,10 @@ Shutdown policy (issue #3)
      (``--drain-timeout``, default 30 s, env ``DRAIN_TIMEOUT_S``).  If a
      worker does not stop in time the event is logged to stderr and recorded
      in the shutdown report (``timed_out`` / ``unstopped_workers``); there is
-     no forced process exit.
+     no forced process exit.  HTTP handlers are then given until the drain
+     deadline plus ``HANDLER_GRACE_S`` (2 s) to write their responses
+     (finished in-flight results, 503 cancellations); any still running are
+     reported as ``unfinished_handlers``.
   5. The HTTP server is closed and the process returns normally.  A second
      shutdown request is acknowledged with HTTP 200 and does not restart the
      sequence; concurrent callers wait for the first call to finish.
@@ -98,6 +105,14 @@ MAX_NEW_TOKENS_MIN = 1
 MAX_NEW_TOKENS_MAX = 256
 MAX_BODY_BYTES = 1 << 20
 GENERATE_TIMEOUT_S = 300.0
+# Max operations (holding + waiting) per session gate.  Requests waiting on a
+# session gate are not in a worker queue, so without this cap a flood of
+# same-session requests would grow blocked handler threads without bound and
+# bypass the bounded queue (issue #7).
+MAX_SESSION_PENDING = 8
+# Grace period, after the drain deadline, for HTTP handlers to write the
+# responses of work that finished (or was cancelled) during the drain.
+HANDLER_GRACE_S = 2.0
 SENTINEL = object()  # worker stop marker
 
 
@@ -276,8 +291,16 @@ class SessionGate:
         self._next_ticket = 0
         self._now_serving = 0
 
-    def acquire(self) -> int:
+    def acquire(self, max_pending: int | None = None) -> int | None:
+        """Take a ticket and wait for it to be served.
+
+        Returns ``None`` (without taking a ticket) if ``max_pending``
+        operations already hold or wait for this gate.
+        """
         with self._cond:
+            if (max_pending is not None
+                    and self._next_ticket - self._now_serving >= max_pending):
+                return None
             ticket = self._next_ticket
             self._next_ticket += 1
             while ticket != self._now_serving:
@@ -345,10 +368,17 @@ class ServerState:
     """Per-process serving state (one instance per server, easy to test)."""
 
     def __init__(self, workers: list[Worker], sessions: SessionStore,
-                 drain_timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S):
+                 drain_timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S,
+                 max_session_pending: int = MAX_SESSION_PENDING):
         self.workers = workers
         self.sessions = sessions
         self.drain_timeout_s = drain_timeout_s
+        self.max_session_pending = max_session_pending
+        # HTTP handlers currently executing (so shutdown can wait for the
+        # responses of drained/cancelled work to be written before the
+        # process exits; handler threads are daemon threads).
+        self._active_handlers = 0
+        self._handlers_cond = threading.Condition()
         self.httpd: ThreadingHTTPServer | None = None
         self.shutdown = False
         self.shutdown_report: dict | None = None
@@ -394,6 +424,26 @@ class ServerState:
 
     def queue_capacity(self) -> int:
         return sum(w.queue_max for w in self.workers)
+
+    def handler_enter(self) -> None:
+        with self._handlers_cond:
+            self._active_handlers += 1
+
+    def handler_exit(self) -> None:
+        with self._handlers_cond:
+            self._active_handlers -= 1
+            self._handlers_cond.notify_all()
+
+    def wait_handlers_idle(self, timeout: float) -> int:
+        """Wait up to ``timeout`` s for running handlers; return how many remain."""
+        deadline = time.monotonic() + timeout
+        with self._handlers_cond:
+            while self._active_handlers > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._handlers_cond.wait(remaining)
+            return self._active_handlers
 
     def queue_depth(self) -> int:
         return sum(w.queue_depth() for w in self.workers)
@@ -470,6 +520,26 @@ def make_handler(state: ServerState):
             return payload, None
 
         def do_GET(self):
+            state.handler_enter()
+            try:
+                self._do_get()
+            finally:
+                state.handler_exit()
+
+        def do_POST(self):
+            state.handler_enter()
+            try:
+                self._do_post()
+            finally:
+                state.handler_exit()
+
+        def _session_overloaded(self) -> None:
+            self._json(429, {
+                'error': f'overloaded: session already has '
+                         f'{state.max_session_pending} pending operation(s)',
+            })
+
+        def _do_get(self):
             if self.path == '/health':
                 self._json(200, {
                     'ok': True,
@@ -487,7 +557,7 @@ def make_handler(state: ServerState):
             else:
                 self._json(404, {'error': 'not_found'})
 
-        def do_POST(self):
+        def _do_post(self):
             path = self.path
 
             # Shutdown is idempotent and must be answerable while shutting down.
@@ -521,7 +591,11 @@ def make_handler(state: ServerState):
                 self._json(400, {'error': err})
                 return
             gate = state.sessions.gate(session)
-            gate.acquire()  # waits for earlier same-session operations
+            # Waits for earlier same-session operations (bounded, see
+            # MAX_SESSION_PENDING).
+            if gate.acquire(state.max_session_pending) is None:
+                self._session_overloaded()
+                return
             try:
                 if state.shutdown:
                     self._json(503, {'error': 'shutting_down'})
@@ -546,7 +620,10 @@ def make_handler(state: ServerState):
                 return
 
             gate = state.sessions.gate(session)
-            gate.acquire()  # FIFO: same-session operations are ordered
+            # FIFO: same-session operations are ordered (bounded wait list).
+            if gate.acquire(state.max_session_pending) is None:
+                self._session_overloaded()
+                return
             try:
                 if state.shutdown:
                     self._json(503, {'error': 'shutting_down'})
@@ -630,8 +707,11 @@ def graceful_shutdown(state: ServerState, claimed: bool = False) -> dict | None:
     spawning the thread); every other caller competes for the claim itself.
     """
     if not claimed and not state.begin_shutdown():
-        # Another caller owns the sequence: wait for it, then report.
-        state.shutdown_finished.wait(timeout=state.drain_timeout_s + 5.0)
+        # Another caller owns the sequence: wait for it, then report.  Every
+        # step of the owner's sequence is individually bounded, so this wait
+        # is bounded too; returning early would let main() exit while the
+        # owner is still draining.
+        state.shutdown_finished.wait()
         return state.shutdown_report
 
     report: dict = {
@@ -641,6 +721,7 @@ def graceful_shutdown(state: ServerState, claimed: bool = False) -> dict | None:
         'timed_out': False,
         'drain_timeout_s': state.drain_timeout_s,
         'httpd_shutdown_timed_out': False,
+        'unfinished_handlers': 0,
     }
     try:
         httpd = state.httpd
@@ -670,6 +751,14 @@ def graceful_shutdown(state: ServerState, claimed: bool = False) -> dict | None:
                 report['workers_stopped'].append(worker.id)
         report['timed_out'] = bool(report['unstopped_workers'])
 
+        # Let handler threads deliver the responses of finished/cancelled
+        # work (they are daemon threads and would otherwise be killed when
+        # main() returns).  A POST /shutdown handler is counted too; it
+        # answers immediately after starting this sequence, so it does not
+        # delay the wait meaningfully.
+        grace = max(0.0, deadline - time.monotonic()) + HANDLER_GRACE_S
+        report['unfinished_handlers'] = state.wait_handlers_idle(grace)
+
         if httpd is not None:
             httpd.server_close()
     except Exception as e:  # noqa: BLE001 - shutdown must always complete
@@ -682,6 +771,10 @@ def graceful_shutdown(state: ServerState, claimed: bool = False) -> dict | None:
         print(f'[shutdown] WARNING: worker(s) {report["unstopped_workers"]} did '
               f'not stop within {state.drain_timeout_s}s; original requests will '
               f'finish in daemon threads without a forced process exit',
+              file=sys.stderr, flush=True)
+    if report['unfinished_handlers']:
+        print(f'[shutdown] WARNING: {report["unfinished_handlers"]} HTTP '
+              f'handler(s) still running; their responses may be lost',
               file=sys.stderr, flush=True)
     if report['httpd_shutdown_timed_out']:
         print('[shutdown] WARNING: httpd.shutdown() did not return in time',

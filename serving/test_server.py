@@ -343,6 +343,52 @@ class BoundedQueueTest(unittest.TestCase):
             h.close()
 
 
+class SessionPendingCapTest(unittest.TestCase):
+    def test_same_session_flood_is_bounded_with_429(self):
+        # Gate waiters are not in a worker queue; the per-session cap keeps
+        # them bounded (arbiter fix for issue #7).
+        started = threading.Event()
+        release = threading.Event()
+
+        def block(prompt, index):  # noqa: ARG001
+            if index == 1:
+                started.set()
+                release.wait(timeout=10)
+
+        pipe = StubPipeline(block=block)
+        h = Harness([pipe], max_queue=4)
+        h.state.max_session_pending = 3
+        try:
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                f1 = ex.submit(h.post, '/generate', {'session': 's', 'prompt': 'A'})
+                self.assertTrue(started.wait(5))
+                f2 = ex.submit(h.post, '/generate', {'session': 's', 'prompt': 'B'})
+                wait_until(lambda: h.state.sessions.gate('s').pending() == 2,
+                           message='B waiting on the session gate')
+                f3 = ex.submit(h.post, '/reset', {'session': 's'})
+                wait_until(lambda: h.state.sessions.gate('s').pending() == 3,
+                           message='three operations on the session gate')
+
+                code, body = h.post('/generate', {'session': 's', 'prompt': 'C'})
+                self.assertEqual(code, 429)
+                self.assertIn('overloaded', body['error'])
+                code, body = h.post('/reset', {'session': 's'})
+                self.assertEqual(code, 429)
+                self.assertEqual(h.state.sessions.gate('s').pending(), 3,
+                                 'rejected operations must not take a ticket')
+                # Other sessions are unaffected by one session's cap.
+                fo = ex.submit(h.post, '/generate', {'session': 'other', 'prompt': 'O'})
+
+                release.set()
+                self.assertEqual([f.result(timeout=10)[0] for f in (f1, f2, f3, fo)],
+                                 [200, 200, 200, 200])
+            self.assertNotIn('C', ''.join(pipe.snapshot_calls()))
+            self.assertEqual(h.state.sessions.history('s'), [])  # reset ran last
+        finally:
+            release.set()
+            h.close()
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.pipe = StubPipeline()
@@ -457,6 +503,7 @@ class ShutdownTest(unittest.TestCase):
             self.assertEqual(report['unstopped_workers'], [])
             self.assertFalse(report['timed_out'])
             self.assertFalse(report['httpd_shutdown_timed_out'])
+            self.assertEqual(report['unfinished_handlers'], 0)
             self.assertEqual(h.state.sessions.history('queued'), [])
             # The in-flight request completed and recorded its history.
             self.assertEqual(len(h.state.sessions.history('inflight')), 2)
@@ -508,6 +555,8 @@ class ShutdownTest(unittest.TestCase):
             self.assertGreaterEqual(elapsed, 0.15)
             self.assertTrue(report['timed_out'])
             self.assertEqual(report['unstopped_workers'], [0])
+            # The handler waiting on the unstopped worker is reported too.
+            self.assertEqual(report['unfinished_handlers'], 1)
             self.assertEqual(report['workers_stopped'], [])
             # Not force-exited: the worker is still alive and completes once
             # the generation is allowed to finish.
@@ -529,6 +578,105 @@ class ShutdownTest(unittest.TestCase):
                     self.fail(f'os._exit() call found at line {node.lineno}')
                 if (isinstance(func, ast.Name) and func.id == '_exit'):
                     self.fail(f'_exit() call found at line {node.lineno}')
+
+
+_CHILD = r"""
+import os, sys, threading, time
+os.environ['SERVING_ALLOW_IMPORT'] = '1'
+sys.path.insert(0, sys.argv[1])
+import server
+
+class _Ids:
+    def __init__(self, n): self.data = list(range(n))
+
+class _Enc:
+    def __init__(self, n): self.input_ids = _Ids(n)
+
+class _Tok:
+    def encode(self, text): return _Enc(len(text))
+
+class _Pipe:
+    def get_tokenizer(self): return _Tok()
+    def generate(self, prompt, max_new_tokens=1, do_sample=False):
+        time.sleep(float(os.environ.get('STUB_GEN_S', '0')))
+        return ' ok'
+
+server._load_pipeline = lambda props: _Pipe()
+sys.argv = ['server.py', '--port', sys.argv[2], '--drain-timeout', '5']
+server.main()
+print('[child] main returned', flush=True)
+"""
+
+
+class ProcessExitTest(unittest.TestCase):
+    """Run server.main() in a real child process and check it exits normally."""
+
+    def _run(self, stop):
+        import socket
+        import subprocess
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        env = dict(os.environ, STUB_GEN_S='0.5')
+        proc = subprocess.Popen(
+            [sys.executable, '-c', _CHILD, str(HERE), str(port)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        try:
+            base = f'http://127.0.0.1:{port}'
+
+            def ready():
+                try:
+                    with urllib.request.urlopen(base + '/health', timeout=1):
+                        return True
+                except OSError:
+                    return False
+            wait_until(ready, timeout=10, message='child server ready')
+
+            result = {}
+
+            def client():
+                req = urllib.request.Request(
+                    base + '/generate', method='POST',
+                    data=json.dumps({'session': 's', 'prompt': 'hi'}).encode())
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    result['status'] = r.status
+                    result['body'] = json.loads(r.read())
+            t = threading.Thread(target=client)
+            t.start()
+            # Wait until the request is in flight on the worker, then stop.
+            def busy():
+                with urllib.request.urlopen(base + '/health', timeout=1) as r:
+                    return json.loads(r.read())['busy'] == [True]
+            wait_until(busy, timeout=5, message='request in flight')
+            stop(proc, base)
+            t.join(timeout=10)
+            out, _ = proc.communicate(timeout=15)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+        return proc.returncode, out, result
+
+    def _check(self, code, out, result):
+        self.assertEqual(code, 0, out)
+        self.assertIn('[child] main returned', out)
+        self.assertIn('[shutdown] stopped workers [0]', out)
+        self.assertNotIn('WARNING', out)
+        # The in-flight request finished and its response was delivered
+        # before the process exited.
+        self.assertEqual(result.get('status'), 200, out)
+        self.assertEqual(result['body']['text'], ' ok')
+
+    def test_post_shutdown_exits_normally_after_in_flight(self):
+        def stop(proc, base):  # noqa: ARG001
+            req = urllib.request.Request(base + '/shutdown', method='POST', data=b'{}')
+            with urllib.request.urlopen(req, timeout=5) as r:
+                self.assertEqual(r.status, 200)
+        self._check(*self._run(stop))
+
+    def test_sigterm_exits_normally_after_in_flight(self):
+        import signal as _signal
+        self._check(*self._run(lambda proc, base: proc.send_signal(_signal.SIGTERM)))
 
 
 class WorkerRobustnessTest(unittest.TestCase):

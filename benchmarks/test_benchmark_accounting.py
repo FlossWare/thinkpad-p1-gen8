@@ -70,9 +70,13 @@ class FakeEncodedResults:
 
 
 class FakeGenerationConfig:
-    def __init__(self, max_new_tokens: int, streamer=None) -> None:
+    """Like genai.GenerationConfig: NO streamer field (streamer is a
+    generate() argument), and unknown attributes are rejected."""
+
+    __slots__ = ('max_new_tokens',)
+
+    def __init__(self, max_new_tokens: int) -> None:
         self.max_new_tokens = max_new_tokens
-        self.streamer = streamer
 
 
 class FakePipeline:
@@ -97,10 +101,12 @@ class FakePipeline:
         self.decode_span_s = decode_span_s
         self.tail_s = tail_s
 
-    def generate(self, tokenized, cfg: FakeGenerationConfig) -> FakeEncodedResults:
+    def generate(self, tokenized, generation_config: FakeGenerationConfig,
+                 streamer=None) -> FakeEncodedResults:
         self.clock.advance(self.prefill_s)  # prefill before first token
         for k in range(self.n_callbacks):
-            cfg.streamer('<chunk>')
+            if streamer is not None:
+                streamer('<chunk>')
             if k < self.n_callbacks - 1:
                 self.clock.advance(self.decode_span_s / (self.n_callbacks - 1))
         self.clock.advance(self.tail_s)
@@ -111,9 +117,9 @@ def run_once(pipe: FakePipeline, clock: FakeClock, max_new: int,
              prompt_tokens: int = 5) -> dict:
     """Drive the fake pipeline exactly the way benchmark.py drives the real one."""
     streamer = TimingStreamer(clock)
-    cfg = FakeGenerationConfig(max_new, streamer=streamer)
+    cfg = FakeGenerationConfig(max_new)
     t_gen0 = clock()
-    out = pipe.generate(None, cfg)
+    out = pipe.generate(None, generation_config=cfg, streamer=streamer)
     t_gen_end = clock()
     run = {'requested_tokens': max_new, 'wall_s': round(t_gen_end - t_gen0, 3)}
     run.update(ta.measure_run(streamer.token_times, t_gen0, t_gen_end,
@@ -158,9 +164,9 @@ def test_callback_count_divergence_is_not_silently_absorbed() -> None:
             streamer_times.append(self.token_times[-1])
 
     streamer = CapturingStreamer(clock)
-    cfg = FakeGenerationConfig(128, streamer=streamer)
+    cfg = FakeGenerationConfig(128)
     t_gen0 = clock()
-    out = pipe.generate(None, cfg)
+    out = pipe.generate(None, generation_config=cfg, streamer=streamer)
     t_gen_end = clock()
     run = {'requested_tokens': 128, 'wall_s': round(t_gen_end - t_gen0, 3)}
     run.update(ta.measure_run(streamer.token_times, t_gen0, t_gen_end,
@@ -214,6 +220,29 @@ def test_generated_over_requested_is_flagged() -> None:
                          prompt_tokens=5)
     assert any('generated 5 > requested 4' in n
                for n in ta.sanity_check(run, requested_tokens=4))
+
+
+def test_benchmark_source_uses_token_ids_not_callbacks() -> None:
+    # benchmark.py cannot be imported (forkserver guard + OpenVINO), so check
+    # its source: the measured-run path must take the token count from the
+    # result object, pass the streamer to generate() (GenerationConfig has no
+    # streamer field), and never use the callback count as a numerator.
+    import ast
+    src = (HERE / 'benchmark.py').read_text()
+    tree = ast.parse(src)
+    assert 'len(streamer.token_times)' not in src
+    assert 'len(out.tokens[0])' in src
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                assert not (isinstance(t, ast.Attribute) and t.attr == 'streamer'), \
+                    'streamer must be passed to generate(), not set on the config'
+    gen_calls = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and n.func.attr == 'generate' and n.args
+                 and isinstance(n.args[0], ast.Name) and n.args[0].id == 'tokenized']
+    assert gen_calls, 'tokenized-input generate() call not found'
+    assert all(any(k.arg == 'streamer' for k in c.keywords) for c in gen_calls)
 
 
 def _main() -> int:

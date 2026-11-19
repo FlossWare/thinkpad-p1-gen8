@@ -15,6 +15,11 @@ reported separately so failed requests can never inflate throughput. Any
 4xx/5xx response is recorded as a failed request (never a crash) and the
 response body's "error" field, when present, is surfaced verbatim.
 
+tokens_per_s is NOMINAL: successful requests x max_new_tokens / wall. The
+server response does not report a generated-token count, so a request that
+stops early at EOS is still counted as max_new_tokens (upper bound); the
+result line records this in tokens_per_s_basis.
+
 Usage: bench_serving.py [--mode sequential|concurrent] [--n 20] [--clients 4]
                         [--port 8931] [--label NAME] [--out results.jsonl]
                         [--max-new 16]
@@ -145,6 +150,8 @@ def bench(args: argparse.Namespace) -> dict:
         'attempted_req_per_s': round(attempted / wall, 3) if wall else None,
         'tokens_per_s': round(successful * args.max_new / wall, 1)
                         if wall else None,
+        'tokens_per_s_basis': 'nominal: successful * max_new_tokens / wall_s '
+                              '(server does not report generated-token counts)',
         'errors_by_class': errors_by_class,
         'requests': records,
         'latency_p50_s': round(latencies[len(latencies)//2], 3) if latencies else None,

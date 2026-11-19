@@ -56,12 +56,12 @@ designed around them.
 
 | Fact | Source |
 |---|---|
-| NPUW Qwen3-0.6B INT4 decode is **41.1 tok/s** with `GENERATE_HINT=BEST_PERF`; baseline `FAST_COMPILE` is 32.9 tok/s. | [docs/npuw-tuning.md](npuw-tuning.md) |
+| NPUW Qwen3-0.6B INT4 decode is **41.1 tok/s** with `GENERATE_HINT=BEST_PERF`; baseline `FAST_COMPILE` is 32.9 tok/s (both pending re-measurement with token-ID accounting — see the note in the tuning doc). | [docs/npuw-tuning.md](npuw-tuning.md) |
 | TTFT is dominated by the shape bucket: **164–170 ms** at `MAX_PROMPT_LEN=64`, **266 ms** at 256. The plugin aligns the bucket up to multiples of 64; prompts longer than it are rejected, not truncated. | [docs/npuw-tuning.md](npuw-tuning.md) |
 | `BEST_PERF` costs **19.8 s cold compile** (per model/config/compiler cache key) and **~1.1 s warm load** from a persistent `CACHE_DIR`. | [docs/npuw-tuning.md](npuw-tuning.md) |
 | Chunked prefill is **slower** than static prefill at 0.6B (476 vs 691 tok/s on a 349-token prompt). | [docs/npuw-tuning.md](npuw-tuning.md) |
-| NPUW stores the KV cache in **FP16** (source-verified), independent of INT4 weights; CPU-vs-NPU greedy output was token-identical on 9/10 battery tests, with one near-tie argmax flip. Per-step top-1-logprob drift: mean ≤ 0.04, max 0.15, cosine ≥ 0.9993. | [docs/correctness.md](correctness.md) |
-| One pipeline + FIFO queue serves **2.50 req/s**; two pipelines are **22% slower** (NPU contention); concurrency adds latency linearly and no throughput. At `mpl=64` a session holds only ~3 short exchanges. | [docs/serving.md](serving.md) |
+| NPUW stores the KV cache in **FP16** (source-verified), independent of INT4 weights; CPU-vs-NPU greedy output was token-identical on 9/10 battery tests, with one near-tie argmax flip. Per-step top-1-logprob drift: mean ≤ 0.04, max 0.15; cosine similarity of the 16-step top-1-logprob vectors ≥ 0.9993 (not a full-logit cosine). | [docs/correctness.md](correctness.md) |
+| One pipeline + FIFO queue serves **~2.0 successful req/s** (16-token requests); concurrency adds latency linearly and no throughput. The single- vs two-pipeline comparison is not yet supported by clean runs. At `mpl=64` a session holds only ~3 short exchanges. | [docs/serving.md](serving.md) |
 | Platform 3720 defaults to the **driver** NPU compiler on Linux and fails model-independently; `IE_NPU_COMPILER_TYPE=PLUGIN` is mandatory. Upstream openvino#38738 is closed "not planned"; no Intel driver release through v1.38.0 documents a fix. | [docs/driver-compiler.md](driver-compiler.md) |
 | openvino#39184 (open) reports Qwen3.5-4B INT8 failing on NPU37XX due to dynamic hybrid KV-cache shapes — relevant to model/format choice in M2. | [docs/driver-compiler.md](driver-compiler.md) |
 | Platform: Core Ultra 7 265H, NPU PCI `8086:7d1d` (platform 3720), Fedora 44 kernel `7.3.4-200.fc44.x86_64`, intel-npu-driver 1.32.0, Level Zero 26.35.39758.21, OpenVINO 2026.5.0 commit `88f8c6bf7c`, GenAI `releases/2026/5` @ `2de7224b`. The Intel Arc GPU has **not** been identified or tested in this repository yet. | [docs/environment.md](environment.md), [hardware/thinkpad-p1-gen8.md](../hardware/thinkpad-p1-gen8.md) |
@@ -109,10 +109,11 @@ These follow the patterns already used by `benchmarks/results/`,
    device, model name and IR hash, and the stack versions (OpenVINO, GenAI, NPU driver,
    Level Zero, kernel) read from the live system at run time. Results without this
    metadata are not accepted into `results/`.
-4. **Device execution is evidenced, not assumed**: the existing `/proc/self/maps` check
-   for `libopenvino_intel_npu_plugin.so` is extended with the matching check for the GPU
-   plugin (`libopenvino_intel_gpu_plugin.so`). A result with no device evidence is
-   marked `device_confirmed: false`.
+4. **Device evidence is recorded in layers, not assumed**: requested device, any
+   resolved-device query, and the `/proc/self/maps` plugin check (extended with the GPU
+   plugin, `libopenvino_intel_gpu_plugin.so`). Plugin presence is recorded as
+   plugin-load evidence only — never as proof that each measured inference ran on that
+   device — following the convention already used by `benchmarks/benchmark.py`.
 5. **Failures are data.** Compile errors, OOM, timeouts, rejected prompts, and garbage
    output are recorded with `status: "failed"`, an `error_class`, and a short stderr
    excerpt. Failed runs are never deleted or overwritten; they are the negative-result
@@ -574,7 +575,7 @@ links: code, documentation, and raw results.
 - The defects and corrections tracked in issues **#1–#8**: this roadmap does not plan,
   duplicate, or re-describe them.
 - The documentation reconciliation tracked in **#11**.
-- Performance claims about other machines, other Arrow Lake NPU platforms (Meteor Lake,
+- Performance claims about other machines, other Intel NPU platforms (Meteor Lake,
   Lunar Lake), other driver generations, or Intel hardware in general.
 - Model quality/leaderboard evaluation beyond the coherence and correctness sanity
   checks needed to trust a measurement.

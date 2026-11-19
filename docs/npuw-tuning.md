@@ -2,8 +2,10 @@
 
 Date: 2026-11-19. Methodology: `benchmarks/benchmark.py`, 3–5 repeats per config,
 median reported, one uncounted warm-up generation per process, TTFT measured via
-streamer callback (this build has no `get_perf_metrics`). NPU execution confirmed via
-`/proc/self/maps` for every row. Raw results: `benchmarks/results/results.jsonl`.
+streamer callback (this build has no `get_perf_metrics`). NPU plugin libraries were
+mapped in-process (`/proc/self/maps`, recorded as `npu_confirmed` in the rows below) for
+every row — plugin-load evidence, **not** independent proof that each measured inference
+executed on the NPU (issue #6). Raw results: `benchmarks/results/results.jsonl`.
 
 > **Methodology update (2026-11-19, issues #1/#6) — tooling changed, the figures
 > below are NOT yet re-measured.** Decode throughput is now computed from the
@@ -22,8 +24,11 @@ streamer callback (this build has no `get_perf_metrics`). NPU execution confirme
 ## Baseline correction
 
 The previous session's "13 tok/s" divided total wall time by token count, folding TTFT
-and process overhead into decode. With per-token streamer timing the true baseline
-decode is **32.9 tok/s**. All comparisons below use the corrected methodology.
+and process overhead into decode. Timing decode from the first to the last streamer
+callback gives a baseline of **32.9 tok/s**; all rows below use that interval. Their
+numerator, however, is the streamer **callback count** − 1, which is not a generated-token
+count (issue #1; see the methodology update above), so every figure in the table is
+pending re-measurement with the token-ID accounting.
 
 ## Results
 

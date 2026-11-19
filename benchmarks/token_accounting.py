@@ -24,6 +24,14 @@ Measurement boundaries:
     interval that may have skipped trailing tokens.) generate() return
     includes a little final detokenization overhead, so the denominator is
     mildly conservative (throughput slightly underestimated).
+  - Known limitation of the start boundary: the first streamer callback is
+    assumed to mark the first generated token. A text streamer may withhold
+    text for an incomplete multi-byte/multi-token piece, in which case the
+    first callback arrives after token k > 1; the numerator (generated - 1)
+    then slightly overstates the tokens inside the interval and TTFT is
+    slightly overstated. For short English prompts with Qwen3 this is
+    expected to be rare; the streamer_chunks vs generated_tokens fields in
+    the raw results make large divergences visible.
   - generated_tokens counts every token ID GenAI reports, including EOS and
     other special tokens: each one cost a decode step, so each belongs in the
     numerator. EOS early-stop means generated_tokens may be < requested.

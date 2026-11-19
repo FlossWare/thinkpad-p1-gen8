@@ -67,16 +67,17 @@ tbb and both NPU compiler libs are already inside the wheel's `openvino/libs/`.
 Launch script: `scripts/run-npuw.sh` (the original acceptance script lives outside this repo). Baseline config:
 `MAX_PROMPT_LEN=256, MIN_RESPONSE_LEN=64, CACHE_DIR=~/AI/npuw-cache`.
 
-**Current baseline (mpl=256, default hints) — corrected methodology, per-token streamer timing, measured 2026-11-19** (see [docs/npuw-tuning.md](npuw-tuning.md) and `benchmarks/results/results.jsonl`):
-- cold compile: **6.2 s**; warm load (cache hit): **~1.1 s**
+**Current baseline (mpl=256, default hints) — measured 2026-11-19 with `benchmarks/benchmark.py`** (decode timed first→last streamer callback; see [docs/npuw-tuning.md](npuw-tuning.md) and [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl), rows `baseline-warm` / `baseline-cold` / `e1-bestperf-warm`). These rows used the streamer callback count as the decode numerator, so the tok/s figures are **pending re-measurement** with the token-ID accounting (issue #1):
+- cold compile: **6.2 s**; warm load (cache hit): **1.0 s**
 - TTFT: **266 ms**; decode: **32.9 tok/s** (33 tok/s rounded in README)
 - with `GENERATE_HINT=BEST_PERF`: **41.1 tok/s** decode (TTFT 262 ms, cold compile 19.8 s, ~1.1 s warm — see tuning doc)
 - peak RSS: 1216 MB (1216–1650 MB range across sessions)
-- NPU execution confirmed via `/proc/self/maps`: `libopenvino_intel_npu_plugin.so`,
-  `libopenvino_intel_npu_compiler_loader.so`, `libze_intel_npu.so.1.32.0`
+- NPU plugin libraries mapped in-process (`/proc/self/maps`): `libopenvino_intel_npu_plugin.so`,
+  `libopenvino_intel_npu_compiler_loader.so`, `libze_intel_npu.so.1.32.0` — this is
+  plugin-load evidence, not independent proof of per-inference NPU execution (issue #6)
 
 Superseded historical measurements (original 2026-11-18, retained for context only):
-the earlier figures of **6.9 s** cold load, **11.4–15.4 tok/s**, and **"original baseline 13 tok/s"** are superseded. They are an artifact of dividing total wall time (including TTFT and process overhead) by token count; the corrected per-token streamer timing gives the 32.9 tok/s baseline above. Figures remain subject to the token-count methodology fix — `benchmarks/results/results.jsonl` and `validation/results/validation-results.json` are the source of truth.
+the earlier decode figures of **11.4–15.4 tok/s** (32-token greedy runs) and the **"original baseline 13 tok/s"** are superseded: they divided total generation wall time (including TTFT) by token count, folding prefill and overhead into decode. The earlier **6.9 s** cold load+compile and **1.2 s** warm load were separate, earlier load-time measurements (not affected by that artifact) and are superseded by the 6.2 s / 1.0 s benchmark rows above. The current figures remain subject to the token-count methodology fix (issue #1); [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl) is the source of truth for performance.
 
 Caveats learned:
 - GenAI python scripts **must** use a `if __name__ == '__main__':` guard — GenAI's
@@ -89,7 +90,7 @@ Caveats learned:
 
 Artifacts in `~/AI/ovfix-static-blob/` (copied from ephemeral `/tmp/ovfix`) and
 `~/AI/models/openvino/` (`qwen3-static-p0/`, `qwen3-static-p128/`, `ov_static_gen.py`).
-40 s compile, 1.19 GB blob, runs on NPU.0. This is a **separate manual static-blob fallback path** (not NPUW): last-token argmax matches CPU and **full-vocabulary logit cosine similarity 0.9916** vs CPU (measured 2026-11-18 via `~/AI/ovfix-static-blob/compare*.py`). This is the only full-logit-level comparison in the repo — distinct from the NPUW top-1-logprob metrics in [docs/correctness.md](correctness.md) — and must not be conflated with them. One shape bucket per blob; `beam_idx` removed by the transformation.
+40 s compile, 1.19 GB blob, runs on NPU.0. This is a **separate manual static-blob fallback path** (not NPUW): last-token argmax matches CPU and the **cosine similarity of the last-position logit vector** (the model's logits output at the final token, NPU vs CPU) is **0.9916** (measured 2026-11-18 via `~/AI/ovfix-static-blob/compare*.py`; that script and its raw output are outside this repo, so the vector length is not re-verified here). This is the only logit-level comparison in the repo — distinct from the NPUW top-1-logprob metrics in [docs/correctness.md](correctness.md) — and must not be conflated with them. One shape bucket per blob; `beam_idx` removed by the transformation.
 **Do not modify.**
 
 ## NPUW LLM options actually supported by this build (source-verified)

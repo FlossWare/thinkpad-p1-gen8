@@ -50,6 +50,12 @@ Full details, install layout, and the two mandatory workarounds:
 
 ### NPUW performance ([docs/npuw-tuning.md](docs/npuw-tuning.md))
 
+> **Pending re-measurement (issue #1).** The decode tok/s figures below were
+> measured with the streamer callback count as the numerator, which is not a
+> generated-token count. `benchmarks/benchmark.py` now counts generated token IDs;
+> these figures will be replaced after the re-runs listed in
+> [docs/npuw-tuning.md](docs/npuw-tuning.md). TTFT and compile times are unaffected.
+
 | Configuration | TTFT | Decode | Cold compile |
 |---|---|---|---|
 | Baseline (`mpl=256`, default hints) | 266 ms | 33 tok/s | 6.2 s |
@@ -70,14 +76,19 @@ Full details, install layout, and the two mandatory workarounds:
 - NPUW KV cache is **FP16** — verified by source inspection
   (`choose_kv_cache_storage_type()` default; `NPUW_LLM_OPTIMIZE_FP8=false`), not
   inferred from the INT4 weights. Activations are converted bf16→f16 model-wide.
-- Per-step top-1-logprob drift: mean |ΔlogP| ≤ 0.04, max ≤ 0.15 per step; cosine similarity over the 16-step top-1 logprob vectors (CPU vs NPU) ≥ 0.9993 — **not** full-vocabulary logit cosine (see [docs/correctness.md](docs/correctness.md)). Full-vocabulary logit comparison exists only on the separate manual static-blob fallback path (0.9916, measured 2026-11-18).
+- Per-step top-1-logprob drift: mean |ΔlogP| ≤ 0.04, max ≤ 0.15 per step; cosine similarity over the 16-step top-1 logprob vectors (CPU vs NPU) ≥ 0.9993 — **not** full-vocabulary logit cosine (see [docs/correctness.md](docs/correctness.md)). The only logit-level comparison (cosine of the last-position logit vector, 0.9916, measured 2026-11-18) is on the separate manual static-blob fallback path, not NPUW.
 - Prompts longer than `MAX_PROMPT_LEN` are cleanly rejected (no silent truncation).
 
 ### Serving ([docs/serving.md](docs/serving.md))
 
-- Recommended architecture: **one persistent pipeline + FIFO queue**. Concurrent
-  requests serialize with zero throughput gain; **two pipeline instances were 22%
-  slower than one** (NPU contention).
+- Recommended architecture: **one persistent pipeline + FIFO queue** (simplest,
+  deterministic error semantics). Concurrent requests on one pipeline serialize with
+  no throughput gain.
+- The earlier "two pipelines are 22% slower" claim is **withdrawn**: it compared
+  single-pipeline runs that each had 4/20 failed requests (counted as completed)
+  against clean two-pipeline runs. Counting successful requests only, the measured
+  arrangements are within ~3% of each other; a clean, comparable re-run is pending
+  (issue #2). See [docs/serving.md](docs/serving.md).
 
 ### Driver compiler ([docs/driver-compiler.md](docs/driver-compiler.md))
 
@@ -123,9 +134,12 @@ Two runtime gotchas discovered during the project (both bite silently):
 
 ## Evidence classification
 
-- **Verified**: everything in the results tables above, with raw JSON in the
-  `results/` directories and per-run NPU-execution evidence
-  (`/proc/self/maps` plugin check) captured by the scripts.
+- **Verified**: everything in the results tables above (subject to the pending
+  re-measurements flagged there), with raw JSON in the `results/` directories. Device
+  evidence per run is the requested device plus the `/proc/self/maps` NPU-plugin
+  check — this shows the NPU plugin was loaded, not that every measured inference
+  executed on the NPU; no per-inference execution telemetry is available in this
+  build.
 - **Observations** (single-machine, single-session): RSS ranges, TTFT variance
   between runs, NPU clock warm-up effects on first generation.
 - **Hypotheses, not tested**: behavior on other NPU platforms (Meteor Lake, Lunar

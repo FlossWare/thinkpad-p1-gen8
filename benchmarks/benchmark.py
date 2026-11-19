@@ -203,11 +203,13 @@ def run_benchmark(args: argparse.Namespace) -> dict:
     runs = []
     for i in range(args.repeats):
         streamer = TimingStreamer()
+        # The streamer is a generate() argument, not a GenerationConfig field
+        # (GenerationConfig has no 'streamer' attribute in GenAI).
         cfg = genai.GenerationConfig(max_new_tokens=args.max_new, do_sample=False)
-        cfg.streamer = streamer
         t_gen0 = time.perf_counter()
         if tokenized is not None:
-            out = pipe.generate(tokenized, cfg)  # EncodedResults: has .tokens
+            # EncodedResults: .tokens holds the generated token IDs.
+            out = pipe.generate(tokenized, generation_config=cfg, streamer=streamer)
             n_generated = len(out.tokens[0]) if getattr(out, 'tokens', None) else None
         else:
             out = pipe.generate(prompt, max_new_tokens=args.max_new,

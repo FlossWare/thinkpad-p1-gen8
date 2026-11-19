@@ -61,13 +61,17 @@ wall = time.perf_counter() - t0
 if times:
     ttft = times[0] - t0
     dec = (len(times) - 1) / (times[-1] - times[0]) if len(times) > 1 else float('nan')
-    print(f'[perf] ttft={ttft*1000:.0f}ms decode={dec:.1f} tok/s wall={wall:.2f}s')
+    # Streamer callbacks are text chunks, not tokens (issue #1): this is a
+    # chunk rate. Use --benchmark for token-ID-based decode throughput.
+    print(f'[perf] ttft={ttft*1000:.0f}ms chunk_rate={dec:.1f} callbacks/s '
+          f'(not tok/s; see --benchmark) wall={wall:.2f}s')
 print(f'[output] {out}')
 
 with open('/proc/self/maps') as f:
     libs = {l.split()[-1] for l in f if 'npu' in l.lower()}
 ok = any('libopenvino_intel_npu_plugin' in x for x in libs)
-print(f'[evidence] NPU plugin mapped: {ok}')
+# Plugin-load evidence only; not proof each inference ran on the NPU (issue #6).
+print(f'[evidence] NPU plugin mapped (load evidence only): {ok}')
 sys.exit(0 if ok else 1)
 PY
 python3 "$TMP_PY" "$PROMPT"

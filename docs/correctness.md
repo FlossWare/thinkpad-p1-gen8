@@ -62,7 +62,7 @@ Each step re-prefills prompt+generated and records that step's top-1 logprob
 (`logit − logsumexp(vocab)`). Continuous-greedy equivalence was confirmed implicitly:
 stepwise token choices matched the continuous sequences for all three prompts.
 
-The "cosine" column below is **cosine similarity over the two 16-element vectors of per-step top-1 log-probabilities** (log P of the greedy token at each step, 16 steps, CPU vs NPU) — **not** full-vocabulary logit cosine. See Limitations for the separate full-logit metric, which exists only on the manual static-blob fallback path.
+The "cosine" column below is **cosine similarity over the two 16-element vectors of per-step top-1 log-probabilities** (log P of the greedy token at each step, 16 steps, CPU vs NPU) — **not** full-vocabulary logit cosine. It is computed by `compare_logprobs()` in `validation/validate.py` and stored as the `cosine` field in `validation/results/validation-results.json`. Because each element is the log-probability of the token *each device chose*, a step where the argmax differs compares log-probabilities of different tokens. See Limitations for the separate last-position logit metric, which exists only on the manual static-blob fallback path.
 
 | Prompt | Steps | Mean \|ΔlogP\| | Max \|ΔlogP\| | Cosine similarity (16-step top-1 logprob vectors, CPU vs NPU) |
 |---|---|---|---|---|
@@ -90,13 +90,16 @@ it. The repeated-token prompt shows the largest, matching the argmax-flip above.
 - This GenAI build exposes no per-step logits (no `logit_processor` hook;
   `EncodedResults.scores` is a sequence **sum** under greedy decoding). Per-step
   numerical comparison is therefore on top-1 logprobs only; top-5 agreement is not
-  measurable through `LLMPipeline`.
-- Direct full-vocabulary logit-level NPU-vs-CPU comparison exists only via the
-  **separate manual static-blob fallback path** (not NPUW): last-token argmax match
-  and **full-vocabulary logit cosine similarity 0.9916** (measured 2026-11-18,
-  `~/AI/ovfix-static-blob/compare*.py`). This is a different path and a different
-  metric from the 16-step top-1-logprob cosine similarities above — token agreement,
-  top-1-logprob drift, and full-logit similarity are three distinct measures.
+  measurable through `LLMPipeline`. For the same reason no NPUW full-vocabulary
+  logit comparison is reported: the API does not permit one in this build (issue #8's
+  optional full-logit item is not achievable through `LLMPipeline` here).
+- Direct logit-level NPU-vs-CPU comparison exists only via the **separate manual
+  static-blob fallback path** (not NPUW): last-token argmax match and **cosine
+  similarity of the last-position logit vector 0.9916** (measured 2026-11-18,
+  `~/AI/ovfix-static-blob/compare*.py`; script and raw output are outside this repo).
+  This is a different path and a different metric from the 16-step top-1-logprob
+  cosine similarities above — token agreement, top-1-logprob drift, and logit-vector
+  similarity are three distinct measures.
 - RoPE/RMSNorm/softmax op-level precision was not instrumented (would require source
   patches, out of scope per project rules); the f16 activation conversion applies
   model-wide as cited above.
