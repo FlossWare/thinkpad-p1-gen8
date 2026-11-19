@@ -144,6 +144,8 @@ Two runtime gotchas discovered during the project (both bite silently):
 - Future work: GPU (Arc iGPU) inference characterization, embedding models on NPU,
   additional runtimes, re-testing against OpenVINO/driver releases that address
   the issues linked above.
+- Prioritized post-Project-1 milestones, evidence plans, and backlog:
+  [docs/roadmap.md](docs/roadmap.md).
 
 ## Third-party components
 
