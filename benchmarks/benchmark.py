@@ -5,9 +5,23 @@ Measures, per configuration:
   - load+compile time (cold: fresh CACHE_DIR, warm: reused CACHE_DIR)
   - time to first token (TTFT) via streamer timestamps
   - prefill throughput (prompt tokens / TTFT)
-  - decode tokens/second (tokens after the first / their wall time)
+  - decode tokens/second, counted from the generated token IDs in the GenAI
+    result object (EncodedResults.tokens) over the first-callback ->
+    generate()-return interval; streamer callbacks are timing boundaries
+    only, never token counts (see token_accounting.py, issue #1)
   - peak RSS
-  - NPU execution evidence (/proc/self/maps)
+  - NPU evidence in layers (issue #6): requested device, resolved-device
+    query, plugin libraries mapped in process. Library presence proves the
+    NPU plugin is loaded, NOT that each measured inference executed on the
+    NPU; no per-inference execution telemetry exists in this build.
+
+TODO(re-runs, issues #1/#6): the rows already in benchmarks/results/
+results.jsonl were produced with the OLD accounting (streamer-callback
+count as the decode numerator) and the OLD npu_confirmed semantics. Re-run
+on the NPU workstation with this script and refresh: baseline rows
+(baseline-warm/cold), BEST_PERF rows (e1/e2/e2b/e3/e4/e5/e5b), and the
+figures in docs/npuw-tuning.md + README.md (docs owned separately). Do not
+mix old and new rows in one comparison.
 
 Usage:
   benchmark.py [--label NAME] [--repeats N] [--max-new N] [--prompt STR]
@@ -34,7 +48,11 @@ import time
 if __name__ != '__main__':  # pragma: no cover
     raise SystemExit(0)  # imported by fork worker: do nothing
 
+import numpy as np
+import openvino as ov
 import openvino_genai as genai
+
+import token_accounting
 
 PROMPTS = {
     'short': 'The capital of France is',
@@ -51,7 +69,12 @@ def parse_set(items: list[str]) -> dict:
 
 
 class TimingStreamer:
-    """Records wall-clock time of every generated token chunk."""
+    """Records wall-clock time of every streamer text chunk.
+
+    Chunks are NOT 1:1 with generated tokens in this build (they can be
+    merged or skipped), so these timestamps are used for timing boundaries
+    only; token counts come from the result object (issue #1).
+    """
 
     def __init__(self) -> None:
         self.t_start: float | None = None
@@ -65,7 +88,13 @@ class TimingStreamer:
         return None  # continue generation
 
 
-def npu_evidence() -> list[str]:
+def npu_mapped_plugin_libs() -> list[str]:
+    """NPU plugin/compiler/Level-Zero libraries mapped into this process.
+
+    Reads /proc/self/maps. This establishes only that those libraries are
+    LOADED in the process; it does NOT prove that any particular inference
+    operation executed on the NPU (issue #6).
+    """
     try:
         with open('/proc/self/maps') as f:
             mapped = {line.split()[-1] for line in f if 'npu' in line.lower() or 'ze_' in line.lower()}
@@ -73,6 +102,52 @@ def npu_evidence() -> list[str]:
         return []
     keys = ('libopenvino_intel_npu', 'libnpu', 'ze_intel_npu')
     return sorted(x for x in mapped if any(k in x for k in keys))
+
+
+def npu_device_query() -> dict:
+    """Best-effort resolved-device query against a fresh OpenVINO Core.
+
+    Records whichever NPU device properties could be read. This is
+    device-resolution evidence (the NPU is enumerable and queryable from
+    this process); it is NOT per-inference execution evidence.
+    """
+    out: dict = {}
+    try:
+        core = ov.Core()
+    except Exception as e:  # noqa: BLE001 - Core() unavailable
+        out['error'] = f'{type(e).__name__}: {e}'
+        return out
+    for key in ('FULL_DEVICE_NAME', 'DEVICE_NAME'):
+        try:
+            out[key] = str(core.get_property('NPU', key))
+        except Exception:  # noqa: BLE001 - property unsupported/renamed
+            pass
+    return out
+
+
+def tokenize_prompt(pipe: genai.LLMPipeline, prompt: str) -> tuple[int, object]:
+    """Tokenize the prompt into genai.TokenizedInputs for measured runs.
+
+    Verified API facts for this build: pipe.generate() with TokenizedInputs
+    returns EncodedResults with .tokens (list of per-sequence token-ID
+    lists); with a plain string prompt it returns DecodedResults (no
+    tokens). tokenizer.encode(str).input_ids is an ov.Tensor whose .data is
+    a numpy view; genai.TokenizedInputs(input_ids=ov.Tensor(...),
+    attention_mask=ov.Tensor(...)) is accepted by generate().
+
+    Returns (n_prompt_tokens, tokenized); batch=1, so the element count is
+    the token count.
+    """
+    tok = pipe.get_tokenizer()
+    enc = tok.encode(prompt)
+    ids = np.array(enc.input_ids.data, dtype=np.int64)
+    if getattr(enc, 'attention_mask', None) is not None:
+        mask = np.array(enc.attention_mask.data, dtype=np.int64)
+    else:
+        mask = np.ones(ids.shape, dtype=np.int64)
+    tokenized = genai.TokenizedInputs(
+        input_ids=ov.Tensor(ids), attention_mask=ov.Tensor(mask))
+    return int(ids.size), tokenized
 
 
 def run_benchmark(args: argparse.Namespace) -> dict:
@@ -110,14 +185,16 @@ def run_benchmark(args: argparse.Namespace) -> dict:
     result['load_compile_s'] = round(time.perf_counter() - t0, 2)
     print(f"[load+compile] {result['load_compile_s']}s (cache: {cache_dir})", flush=True)
 
-    # Tokenize once to know the prompt token count (prefill denominator).
+    # Tokenize once: the prompt token count (prefill denominator) and the
+    # TokenizedInputs needed to get generated token IDs back from generate()
+    # (a string-prompt generate returns DecodedResults, which has no tokens).
     n_prompt_tokens = None
+    tokenized = None
     try:
-        tok = pipe.get_tokenizer()
-        ids = tok.encode(prompt).input_ids
-        n_prompt_tokens = int(ids.get_size())  # batch=1, so element count == token count
+        n_prompt_tokens, tokenized = tokenize_prompt(pipe, prompt)
     except Exception as e:  # noqa: BLE001
-        print(f'[warn] token count unavailable: {e}', flush=True)
+        print(f'[warn] tokenization unavailable, falling back to string '
+              f'prompt (no token-ID accounting): {e}', flush=True)
     result['prompt_tokens'] = n_prompt_tokens
 
     # Uncounted warm-up: first generate pays lazy graph init / NPU clock ramp.
@@ -126,28 +203,37 @@ def run_benchmark(args: argparse.Namespace) -> dict:
     runs = []
     for i in range(args.repeats):
         streamer = TimingStreamer()
+        cfg = genai.GenerationConfig(max_new_tokens=args.max_new, do_sample=False)
+        cfg.streamer = streamer
         t_gen0 = time.perf_counter()
-        out = pipe.generate(prompt, max_new_tokens=args.max_new,
-                            streamer=streamer, do_sample=False)
-        t_gen = time.perf_counter() - t_gen0
-        tt = streamer.token_times
-        n_tok = len(tt)
-        ttft = (tt[0] - t_gen0) if tt else None
-        decode_t = (tt[-1] - tt[0]) if n_tok > 1 else None
+        if tokenized is not None:
+            out = pipe.generate(tokenized, cfg)  # EncodedResults: has .tokens
+            n_generated = len(out.tokens[0]) if getattr(out, 'tokens', None) else None
+        else:
+            out = pipe.generate(prompt, max_new_tokens=args.max_new,
+                                streamer=streamer, do_sample=False)
+            n_generated = None
+        t_gen_end = time.perf_counter()
         run = {
             'run': i,
-            'wall_s': round(t_gen, 3),
-            'streamer_chunks': n_tok,
-            'ttft_s': round(ttft, 4) if ttft is not None else None,
-            'decode_s': round(decode_t, 4) if decode_t is not None else None,
-            'decode_tok_s': round((n_tok - 1) / decode_t, 2) if decode_t and n_tok > 1 else None,
-            'prefill_tok_s': round(n_prompt_tokens / ttft, 1) if (ttft and n_prompt_tokens) else None,
+            'requested_tokens': args.max_new,
+            'wall_s': round(t_gen_end - t_gen0, 3),
         }
+        run.update(token_accounting.measure_run(
+            streamer.token_times, t_gen0, t_gen_end, n_generated,
+            n_prompt_tokens))
+        for note in token_accounting.sanity_check(run, args.max_new):
+            print(f'[note] {note}', flush=True)
         runs.append(run)
         print(f"[run {i}] wall={run['wall_s']}s ttft={run['ttft_s']}s "
-              f"decode={run['decode_tok_s']} tok/s prefill={run['prefill_tok_s']} tok/s", flush=True)
+              f"decode={run['decode_tok_s']} tok/s "
+              f"({run['generated_tokens']} generated / {run['streamer_chunks']} callbacks) "
+              f"prefill={run['prefill_tok_s']} tok/s", flush=True)
         if i == 0:
-            result['output_preview'] = out[:160]
+            try:
+                result['output_preview'] = out.texts[0][:160]
+            except (AttributeError, IndexError, TypeError):
+                result['output_preview'] = str(out)[:160]
 
     result['runs'] = runs
 
@@ -163,11 +249,31 @@ def run_benchmark(args: argparse.Namespace) -> dict:
         'wall_s': med('wall_s'),
     }
     result['peak_rss_mb'] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
-    ev = npu_evidence()
-    result['npu_evidence'] = ev[:6]
-    result['npu_confirmed'] = any('libopenvino_intel_npu_plugin' in x for x in ev)
+
+    # NPU evidence, in distinct layers (issue #6):
+    #   1. requested device: what the pipeline was constructed with
+    #   2. resolved device: NPU properties queryable via a fresh ov.Core
+    #   3. plugin libraries mapped in process: /proc/self/maps
+    # Execution-level evidence: this build of OpenVINO GenAI exposes no
+    # per-inference device telemetry (no perf-metrics API, no per-request
+    # device accounting), so benchmark runs cannot independently verify that
+    # each measured operation executed on the NPU. We record that limitation
+    # explicitly instead of presenting library presence as proof.
+    libs = npu_mapped_plugin_libs()
+    result['device_requested'] = 'NPU'
+    result['npu_plugin_libs_mapped'] = libs[:6]
+    result['npu_plugin_loaded'] = any('libopenvino_intel_npu_plugin' in x for x in libs)
+    result['npu_device_query'] = npu_device_query() or None
+    result['npu_execution_evidence'] = None  # unavailable in this build (see above)
     print(f"[median] {result['median']}", flush=True)
-    print(f"[rss] {result['peak_rss_mb']} MB | npu_confirmed={result['npu_confirmed']}", flush=True)
+    print(f"[rss] {result['peak_rss_mb']} MB", flush=True)
+    print(f"[npu] requested=NPU | plugin_loaded={result['npu_plugin_loaded']} | "
+          f"device_query={result['npu_device_query']}", flush=True)
+    print('[npu] limitation: /proc/self/maps shows the NPU plugin libraries are '
+          'mapped in this process; that is plugin-load evidence only. No '
+          'per-inference execution telemetry exists in this build, so NPU '
+          'execution of the measured operations is not independently verified.',
+          flush=True)
 
     if args.cold:
         shutil.rmtree(cache_dir, ignore_errors=True)
