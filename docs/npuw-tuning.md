@@ -74,8 +74,14 @@ result stands, absolute values are indicative only.
 3. **Chunked prefill (`PREFILL_HINT=DYNAMIC` + `NPUW_LLM_PREFILL_CHUNK_SIZE`) works but
    is slower than static** at this model size: 476 vs 691 tok/s prefill on a 289-token
    prompt (historical rows, same accounting on both sides). Per-chunk overhead dominates any dynamism benefit for 0.6B. Not recommended.
-4. `MIN_RESPONSE_LEN` is aligned to 64 by the plugin; the default 64 already sustains
-   128-token generations without measurable degradation (row 4), so no change needed.
+4. `MIN_RESPONSE_LEN` is aligned to 64 by the plugin. **Correction (issue #13):** the
+   default 64 does *not* sustain a 128-token generation at `MAX_PROMPT_LEN=64` — the
+   KV window is mpl + mrl = 128 tokens total (prompt + generated combined), and the
+   re-measured row 4 (`re-mp64-bestperf-128tok`) generated **123 of 128 requested
+   tokens** with a 5-token prompt (5 + 123 = 128). The earlier "sustains 128" claim
+   came from the superseded callback-count rows, which never counted tokens. To get
+   full 128-token responses, size `MIN_RESPONSE_LEN ≥ prompt_len + 128 − MAX_PROMPT_LEN`.
+   Source trace: [npu-early-stop-investigation.md](npu-early-stop-investigation.md).
 5. Prefill throughput scales with prompt length (16.8 tok/s @ 5 tokens in `re-baseline-warm`
    → 691 tok/s @ 289 tokens in the historical `e5b-static-mpl512-cold` row; prefill =
    prompt tokens / TTFT, which the token-accounting change does not affect): fixed
