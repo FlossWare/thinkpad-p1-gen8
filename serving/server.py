@@ -523,14 +523,21 @@ class SessionStore:
 
     def build_prompt(self, entry: SessionEntry, prompt: str,
                      counter) -> tuple[str, int]:
-        """Return (full prompt, token count) without mutating the history."""
+        """Return (full prompt, token count) without mutating the history.
+
+        Only the snapshot is taken under ``_lock``; tokenization runs outside
+        it so one session's counting does not serialize all sessions.  The
+        caller holds the entry's gate ticket, and history is only mutated by
+        the ticket holder (``record``/``reset``), so the snapshot cannot go
+        stale while it is being counted.
+        """
         with self._lock:
             full = ''.join(entry.history) + prompt
-            n_tok = counter(full)
-            if n_tok > HISTORY_LIMIT_TOKENS:
-                raise HistoryLimitError(f'session history ({n_tok} tokens) exceeds '
-                                 f'{HISTORY_LIMIT_TOKENS}-token limit; reset the session')
-            return full, n_tok
+        n_tok = counter(full)
+        if n_tok > HISTORY_LIMIT_TOKENS:
+            raise HistoryLimitError(f'session history ({n_tok} tokens) exceeds '
+                                    f'{HISTORY_LIMIT_TOKENS}-token limit; reset the session')
+        return full, n_tok
 
     def record(self, entry: SessionEntry, prompt: str, answer: str) -> None:
         with self._lock:

@@ -29,8 +29,11 @@ The token-ID re-measurement of exactly that configuration
 (`benchmarks/results/results.jsonl`, row `re-mp64-bestperf-128tok`:
 `MAX_PROMPT_LEN=64, MIN_RESPONSE_LEN=64`, 5-token prompt, `max_new_tokens=128`)
 records **`generated_tokens: 123`** in all three runs, and 5 + 123 = 128 = 64 + 64 —
-the same boundary arithmetic as the 193-token case. The output preview ends
-mid-sentence ("…But wait, maybe I should "), i.e. no natural EOS.
+the same boundary arithmetic as the 193-token case. (No output text is recorded
+for that row: its `output_preview` is an object repr. The superseded
+`e3-mp64-bestperf-128tok` preview is truncated to 160 characters by `benchmark.py`, so
+it says nothing about EOS either. A natural EOS landing exactly on the 128-token
+window in all three runs is implausible, but EOS was not checked directly; see probe #7.)
 
 The earlier belief that 128 tokens "completed fine" came from the superseded
 callback-count accounting (historical row `e3-mp64-bestperf-128tok` records only
@@ -173,8 +176,11 @@ which predicts every probe length exactly.
 
 **UNEXPLAINED:** nothing remains for this specific observation. One adjacent
 open question, out of scope for this issue: whether a *natural* EOS could ever be
-confused with the capacity stop in the recorded battery (it cannot for these two
-cases — both outputs end mid-sentence).
+confused with the capacity stop in the recorded battery. For the 193-token case it
+cannot: the NPU's 127 tokens equal the CPU's first 127, and the CPU's 128th greedy
+token (13876 in `validation-results.json`) is not EOS, so the NPU stopped where an
+identical greedy prefix continues. For the mpl=64 row only the boundary arithmetic
+supports it (no token IDs recorded; explicit EOS probe #7 not run).
 
 ## Empirical confirmation (NPU machine, 2026-11-19)
 
@@ -201,7 +207,8 @@ lengths. Raw: [`validation/results/boundary-probes.json`](../validation/results/
 | **256** | 64 | 64 | **64** | **320** | 64 (fits exactly) | yes |
 
 All 11 NPU lengths equal the prediction; CPU always produced the requested count. The
-early stop is prefix-exact in all three truncating cases. **Note on the 5-token rows:**
+early stop is prefix-exact in both truncating cases (193 × 128 → 127 and
+200 × 128 → 120; 192 × 128 and 256 × 64 fill the window exactly without truncation). **Note on the 5-token rows:**
 `prefix_match` is false there — the CPU and NPU token sequences diverge somewhere in
 these long generations from a repetitive filler prompt. This is a content divergence
 (the FP16 near-tie class documented in `docs/correctness.md`), not a length effect:
@@ -211,7 +218,9 @@ investigated further here.
 Together with the recorded mpl=64 row (`re-mp64-bestperf-128tok`: 5 + 123 = 128 =
 64 + 64), the boundary is confirmed at two different `MAX_PROMPT_LEN` values. Of the
 planned probes below, #1, #2 and the #3 subset 129/191/200 were run, #5 is covered by
-the recorded mpl=64 row; #3 (255), #4 (316 requested), #6 (mrl=128), #7 (explicit EOS
+the recorded mpl=64 row. Six cases in the table were added beyond the pre-run design:
+5 × 128/190/200 (far from the window) and 193 × 64, 250 × 64, 256 × 64 (256 × 64 is the
+exact-fill case on the prompt side). #3 (255), #4 (316 requested), #6 (mrl=128), #7 (explicit EOS
 check) and #8 were **not** run. #6 is the remaining direct test that the window moves
 with `MIN_RESPONSE_LEN` (the source and the mpl=64 data point say it does).
 

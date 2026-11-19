@@ -104,8 +104,14 @@ LRU eviction on admission* (not hard rejection of new sessions).
   (configured maximum) and `session_evictions` (cumulative since process start).
 - **Operational limit**: the LRU scan is O(number of stored sessions) and runs only
   when a new session is admitted at capacity; with the default 1024 this is
-  negligible. Memory is bounded by `max-sessions × (history limit + gate)`, i.e. at
-  most 1024 sessions each capped at 1024 history tokens.
+  negligible. Memory is bounded by `max-sessions × (per-session history + gate)`.
+  Per-session history is checked *before* a turn, and the answer is appended afterwards.
+  The counted prompt must pass `prompt_too_long` (`MAX_PROMPT_LEN`, 64 by default) and
+  `HISTORY_LIMIT_TOKENS` (1024), and prompt + `max_new_tokens` must fit the KV window.
+  So a retained history is roughly one accepted prompt plus its answer: about
+  `MAX_PROMPT_LEN + MIN_RESPONSE_LEN` tokens (128 by default). Re-tokenizing joined text
+  makes this approximate, not exact. The total is therefore at most 1024 sessions of
+  roughly that size each.
 
 ## Measurements
 

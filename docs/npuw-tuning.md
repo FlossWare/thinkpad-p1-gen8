@@ -83,7 +83,7 @@ result stands, absolute values are indicative only.
    came from the superseded callback-count rows, which never counted tokens. To get
    full responses, size the window so that
    **`prompt_tokens + max_new_tokens ≤ MAX_PROMPT_LEN + MIN_RESPONSE_LEN`**; anything
-   beyond it is silently truncated (prefix-exact, no error, no EOS). Confirmed on the
+   beyond it is silently truncated (prefix-exact, no error, not a natural EOS). Confirmed on the
    NPU (2026-11-19, `validation/results/boundary-probes.json`: at 256 + 64, 192 × 128
    completes, 193 × 128 → 127, 200 × 128 → 120). The plugin aligns `MIN_RESPONSE_LEN`
    up to a multiple of 64 but GenAI's stop check uses the configured value, so use
