@@ -24,34 +24,40 @@ executed on the NPU (issue #6). Raw results: `benchmarks/results/results.jsonl`.
 ## Baseline correction
 
 The previous session's "13 tok/s" divided total wall time by token count, folding TTFT
-and process overhead into decode. Timing decode from the first to the last streamer
-callback gives a baseline of **32.9 tok/s**; all rows below use that interval. Their
-numerator, however, is the streamer **callback count** − 1, which is not a generated-token
-count (issue #1; see the methodology update above), so every figure in the table is
-pending re-measurement with the token-ID accounting.
+and process overhead into decode. A second correction (issue #1): the streamer
+**callback count** is not a generated-token count (31 callbacks for 32 generated tokens
+is typical), so callback-count numerators also under-report. All current figures below
+come from the **token-ID re-measurement** (2026-11-19, rows labeled `re-*` in
+`benchmarks/results/results.jsonl`): the numerator is `EncodedResults.tokens` length,
+the interval is first→last streamer callback.
 
-## Results
+## Results (token-ID accounting, 2026-11-19 re-measurement)
 
-| # | Config (delta vs baseline) | Compile (cold) | Warm load | TTFT | Decode tok/s | Prefill tok/s | Peak RSS |
-|---|---|---|---|---|---|---|---|
-| 0 | baseline: mpl=256, FAST_COMPILE | 6.2 s | 1.0 s | 266 ms | 32.9 | 18.8 (5-tok prompt) | 1216 MB |
-| 1 | + `GENERATE_HINT=BEST_PERF` | 19.8 s | 1.1 s | 262 ms | **41.1** | 19.1 | 1743 MB |
-| 2 | `MAX_PROMPT_LEN=64` only | 5.9 s | — | 172 ms | 30.7 | 29.0 | ~1216 MB |
-| 3 | mpl=64 + BEST_PERF | 19.8 s | 1.1 s | **164 ms** | **41.1** | 30.4 | 1248 MB |
-| 4 | (#3) sustained 128-token gen | (cached) | 1.1 s | 164 ms | 41.1 | 30.7 | 1248 MB |
-| 5 | mpl=256 + BEST_PERF, 23-tok prompt | (cached) | 1.1 s | 293 ms | 37.1 | 78.4 | — |
-| 6 | mpl=512 + chunked prefill (chunk=128, DYNAMIC), 349-tok prompt | 21.3 s | — | 643 ms | 41.2 | 476 | 1803 MB |
-| 7 | mpl=512 + static prefill, same 349-tok prompt | 21.1 s | — | **457 ms** | 41.1 | **691** | 1814 MB |
+| # | Config (delta vs baseline) | Compile (cold) | Warm load | TTFT | Decode tok/s | Prefill tok/s |
+|---|---|---|---|---|---|---|
+| 0 | baseline: mpl=256, FAST_COMPILE | 6.2 s | 1.0 s | 297 ms | 36.5 | 16.8 (5-tok prompt) |
+| 1 | + `GENERATE_HINT=BEST_PERF` | 19.8 s | 1.1 s | 317 ms | **42.2** | 15.8 |
+| 2 | `MAX_PROMPT_LEN=64` only | 5.9 s | — | 257 ms | 36.4 | 19.5 |
+| 3 | mpl=64 + BEST_PERF (recommended) | 19.8 s | 1.1 s | **189 ms** | **44.6** | 26.5 |
+| 4 | (#3) sustained 128-token gen | (cached) | 1.1 s | 196 ms | 42.3 | 25.5 |
+| 5 | mpl=256 + BEST_PERF, 23-tok prompt | (cached) | 1.1 s | 295 ms | 46.2 | 78.0 |
+
+Historical rows measured with the superseded callback-count accounting (32.9 baseline,
+41.1 BEST_PERF) remain in `results.jsonl` under their original labels; the chunked-
+prefill comparison (rows 6–7 of the original run: chunked 476 vs static 691 tok/s
+prefill on a 349-token prompt) was not re-run — its conclusion compares two
+configurations measured under the same (superseded) accounting, so the *relative*
+result stands, absolute values are indicative only.
 
 ## Findings
 
-1. **`GENERATE_HINT=BEST_PERF` is the single biggest decode win: 32.9 → 41.1 tok/s
-   (+25%)**, stable across 32- and 128-token generations and warm/cold caches.
-   Mechanism (source-verified): replaces `NPUW_UNFOLD_IREQS=YES` with
+1. **`GENERATE_HINT=BEST_PERF` is the single biggest decode win: 36.5 → 44.6 tok/s
+   (+22%)** at mpl=64, stable across 32- and 128-token generations and warm/cold
+   caches. Mechanism (source-verified): replaces `NPUW_UNFOLD_IREQS=YES` with
    `NPUW_ONLINE_PIPELINE=NONE` in the decode graph config. Costs: cold compile
    6.2 s → 19.8 s (one-time, then cached at ~1.1 s warm load), peak RSS
    +~500 MB. Only valid with the default generate config (throws otherwise).
-2. **`MAX_PROMPT_LEN=64` cuts TTFT 266 → 164 ms (−38%)** for short prompts. The static
+2. **`MAX_PROMPT_LEN=64` cuts TTFT 297 → 189 ms (−36%)** for short prompts. The static
    prefill graph pads to the bucket, so the bucket size dominates TTFT; prompt length
    itself is a minor term (5→23 tokens only added ~27 ms at mpl=256). `MAX_PROMPT_LEN`
    is aligned up to multiples of 64 by the plugin, so 64 is the floor. Prompts longer
@@ -62,7 +68,7 @@ pending re-measurement with the token-ID accounting.
    prompt. Per-chunk overhead dominates any dynamism benefit for 0.6B. Not recommended.
 4. `MIN_RESPONSE_LEN` is aligned to 64 by the plugin; the default 64 already sustains
    128-token generations without measurable degradation (row 4), so no change needed.
-5. Prefill throughput scales with prompt length (18.8 tok/s @ 5 tokens → 691 tok/s @
+5. Prefill throughput scales with prompt length (16.8 tok/s @ 5 tokens → 691 tok/s @
    349 tokens): fixed per-inference overhead, not per-token prefill cost.
 
 ## Recommended configuration

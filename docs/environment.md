@@ -69,15 +69,19 @@ Launch script: `scripts/run-npuw.sh` (the original acceptance script lives outsi
 
 **Current baseline (mpl=256, default hints) — measured 2026-11-19 with `benchmarks/benchmark.py`** (decode timed first→last streamer callback; see [docs/npuw-tuning.md](npuw-tuning.md) and [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl), rows `baseline-warm` / `baseline-cold` / `e1-bestperf-warm`). These rows used the streamer callback count as the decode numerator, so the tok/s figures are **pending re-measurement** with the token-ID accounting (issue #1):
 - cold compile: **6.2 s**; warm load (cache hit): **1.0 s**
-- TTFT: **266 ms**; decode: **32.9 tok/s** (33 tok/s rounded in README)
-- with `GENERATE_HINT=BEST_PERF`: **41.1 tok/s** decode (TTFT 262 ms, cold compile 19.8 s, ~1.1 s warm — see tuning doc)
+- TTFT: **297 ms**; decode: **36.5 tok/s**
+- with `GENERATE_HINT=BEST_PERF`: **42.2 tok/s** decode at mpl=256, **44.6 tok/s** at mpl=64 (TTFT 189 ms; cold compile 19.8 s, ~1.1 s warm — see tuning doc)
 - peak RSS: 1216 MB (1216–1650 MB range across sessions)
 - NPU plugin libraries mapped in-process (`/proc/self/maps`): `libopenvino_intel_npu_plugin.so`,
   `libopenvino_intel_npu_compiler_loader.so`, `libze_intel_npu.so.1.32.0` — this is
-  plugin-load evidence, not independent proof of per-inference NPU execution (issue #6)
+  plugin-load evidence, not independent proof of per-inference NPU execution (issue #6).
+  Device-level query additionally returns `FULL_DEVICE_NAME = "Intel(R) AI Boost"`
+  (verified on this machine 2026-11-19 by the benchmark's `npu_device_query`); no
+  per-inference execution telemetry exists in this build, so that stronger level of
+  verification is not claimed.
 
 Superseded historical measurements (original 2026-11-18, retained for context only):
-the earlier decode figures of **11.4–15.4 tok/s** (32-token greedy runs) and the **"original baseline 13 tok/s"** are superseded: they divided total generation wall time (including TTFT) by token count, folding prefill and overhead into decode. The earlier **6.9 s** cold load+compile and **1.2 s** warm load were separate, earlier load-time measurements (not affected by that artifact) and are superseded by the 6.2 s / 1.0 s benchmark rows above. The current figures remain subject to the token-count methodology fix (issue #1); [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl) is the source of truth for performance.
+the earlier decode figures of **11.4–15.4 tok/s** (32-token greedy runs) and the **"original baseline 13 tok/s"** are superseded: they divided total generation wall time (including TTFT) by token count, folding prefill and overhead into decode. The earlier **6.9 s** cold load+compile and **1.2 s** warm load were separate, earlier load-time measurements (not affected by that artifact) and are superseded by the 6.2 s / 1.0 s benchmark rows above. The figures above use the token-ID accounting (issue #1, re-measured 2026-11-19, rows `re-*`); [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl) is the source of truth for performance.
 
 Caveats learned:
 - GenAI python scripts **must** use a `if __name__ == '__main__':` guard — GenAI's

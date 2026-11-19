@@ -40,66 +40,72 @@ sequentially.
   their responses; the process then exits normally (no `os._exit`).
 - Endpoints: `POST /generate`, `POST /reset`, `GET /health`, `POST /shutdown`.
 
-## Measurements (20 requests, 16 new tokens each, short prompts, mpl=64, BEST_PERF)
+## Measurements
 
-Source: [`serving/results/serving-results.jsonl`](../serving/results/serving-results.jsonl)
-(row label in the first column). These rows were produced by the **old** benchmark
-client, which recorded only an error count and computed `throughput_req_per_s` as
-`n / wall` — i.e. it counted failed requests as completed (issue #2). The table below
-is reconciled with the raw file: "Successful req/s" is derived as
-`(n − errors) / wall_s` from the raw row; "nominal tok/s" assumes 16 tokens per
-successful request (the server does not report generated-token counts). Latency
-percentiles are over successful requests only.
+### Clean re-runs (2026-11-19, new client, corrected server; issue #2)
 
-| Arrangement (raw label) | Attempted | Failed | Successful req/s (nominal tok/s) | Old `n/wall` figure | p50 latency | p95 latency |
-|---|---|---|---|---|---|---|
-| 1 pipeline, sequential (`w1-sequential`) | 20 | **4** | 2.00 (32.0) | 2.50 | 0.50 s | 0.57 s |
-| 1 pipeline, 4 concurrent clients (`w1-concurrent-c4`) | 20 | **4** | 2.02 (32.3) | 2.52 | 1.97 s | 2.00 s |
-| 1 pipeline, 8 concurrent clients (`w1-concurrent-c8`) | 20 | **4** | 2.01 (32.2) | 2.52 | 3.95 s | 4.94 s |
-| 2 pipelines (round-robin), sequential (`w2clean-sequential`) | 20 | 0 | 1.94 (31.0) | 1.94 | 0.49 s | 0.83 s |
-| 2 pipelines, 4 concurrent clients (`w2clean-concurrent-c4`) | 20 | 0 | 1.97 (31.5) | 1.97 | 2.00 s | 2.54 s |
+All rows: 20 requests, 16 new tokens each, short prompts, mpl=64, BEST_PERF, fresh
+per-run sessions, **zero failures in every run**. Source:
+[`serving/results/serving-results.jsonl`](../serving/results/serving-results.jsonl),
+rows labeled `re-*`. "Nominal tok/s" = successful × 16 / wall (the server does not
+report generated-token counts; labeled as such in the raw rows).
 
-The raw file also contains earlier rows not summarized here (`sequential-n20-c4`:
-8/20 failed; `concurrent-n20-c4`: 5/20 failed; `w2-*`: two-pipeline runs taken with a
-stray idle server loaded, superseded by `w2clean-*`).
+| Arrangement (raw label) | Attempted | Failed | Successful req/s (nominal tok/s) | p50 latency | p95 latency |
+|---|---|---|---|---|---|
+| 1 pipeline, sequential (`re-w1-sequential`) | 20 | 0 | 1.93 (30.9) | 0.50 s | 0.87 s |
+| 1 pipeline, 4 clients (`re-w1-concurrent-c4`) | 20 | 0 | 1.86 (29.8) | 2.03 s | 2.68 s |
+| 1 pipeline, 8 clients (`re-w1-concurrent-c8`) | 20 | 0 | 1.82 (29.0) | 4.43 s | 4.54 s |
+| 2 pipelines, sequential (`re-w2-sequential`) | 20 | 0 | 1.88 (30.0) | 0.51 s | 0.89 s |
+| 2 pipelines, 4 clients (`re-w2-concurrent-c4`) | 20 | 0 | 2.17 (34.7) | 1.83 s | 2.54 s |
 
-What the raw data says about the single-pipeline failures: in each `w1-*` run the
-server's `requests_done` advanced by exactly 16 and its pipeline `errors` stayed 0, so
-the 4 failed requests were rejected **before reaching the pipeline** (a pre-queue HTTP
-4xx or a client-side failure) — not generation failures. The old client printed each
-error message to the console only; the messages were not preserved, so the exact cause
-cannot be recovered from the repository. (Four failures out of 20 matches one of the
-five cycled prompts failing every time — a hypothesis, not a finding.) The new client
-records per-request status and server error text, so re-runs will settle this.
+Live SIGTERM shutdown was exercised after the two-pipeline runs: the server drained
+(in-flight request finished, 0 queued requests cancelled), logged
+`[shutdown] stopped workers [0, 1]`, and exited normally — the orderly-shutdown
+behavior required by issue #3, verified on the real service (in addition to the
+in-process test suite).
 
-Findings:
+Findings (clean re-runs):
 
-1. **Concurrency does not increase throughput** on one pipeline (2.00 → 2.02 → 2.01
-   successful req/s for 1/4/8 clients, within noise): requests serialize on the worker;
-   per-client latency grows linearly with client count (4 clients → ~4× p50), exactly as
-   a FIFO queue predicts.
-2. **Single vs two pipelines: no supported conclusion yet.** The previously published
-   "two pipelines are ~22% slower than one" compared the old `n/wall` figure (2.50 req/s,
-   counting 4 failed requests as completed) with clean two-pipeline runs. Counting
-   successful requests only, single-pipeline (2.00–2.02 req/s) and two-pipeline
-   (1.94–1.97 req/s) runs are within ~3% — and the single-pipeline runs are not clean.
-   A clean, comparable re-run with the new client is required (issue #2); until then
-   this comparison must not be cited.
-3. Host RSS for the two-pipeline process is only ~411 MB — the compiled blobs live in
+1. **Concurrency does not increase single-pipeline throughput** (1.93 → 1.86 → 1.82
+   req/s for sequential/4/8 clients): requests serialize on the worker; per-client
+   latency grows linearly with client count (4 clients → ~4× p50), exactly as a FIFO
+   queue predicts.
+2. **Single vs two pipelines: no consistent benefit.** Sequential throughput is a wash
+   (1.88 vs 1.93 req/s); under 4-client concurrency two pipelines are ~16% faster
+   (2.17 vs 1.86 req/s) with lower per-request latency (1.83 s vs 2.03 s p50). Two
+   pipelines cost a second model load and NPU device memory for no sequential gain,
+   so **one pipeline + FIFO queue remains the recommendation**; add a second worker
+   only if concurrent-request latency matters more than simplicity.
+3. Host RSS for the two-pipeline process is only ~422 MB — the compiled blobs live in
    NPU device memory, not host heap (single-pipeline processes measured 1.2–1.8 GB
    peak RSS in `benchmark.py`, which includes Python-side tensors).
 4. Session-history growth is the practical capacity limit: at mpl=64 a session can
    hold ~3 short exchanges before `prompt_too_long`. Serving real conversations needs
-   mpl=256 (TTFT 266 ms) or client-side history truncation.
+   mpl=256 (TTFT ~300 ms) or client-side history truncation.
+
+### Historical runs (superseded; kept for the record)
+
+The original `w1-*` rows were produced by the **old** benchmark client, which recorded
+only an error count and computed throughput as `n / wall` — counting failed requests
+as completed (issue #2). Each `w1-*` run had 4 of 20 requests fail before reaching the
+pipeline (server `requests_done` advanced by 16, pipeline `errors` stayed 0); the old
+client did not preserve per-request outcomes, so the exact cause is unrecoverable from
+the repository. The earlier published claim that "two pipelines are 22% slower than
+one" compared those error-inflated figures with clean two-pipeline runs and **has been
+withdrawn**; the clean re-runs above supersede the whole comparison. See the raw file
+for the full history (`sequential-n20-c4`, `concurrent-n20-c4`, `w1-*`, `w2-*`,
+`w2clean-*`).
 
 ## Recommendation
 
 **One pipeline + FIFO queue** (the default `--workers 1`). It is the simplest
-arrangement, a second pipeline showed no measured throughput benefit, and it is the only
-one where error semantics are fully predictable. (Whether a second pipeline is slower
-awaits the clean re-run noted above.) Scale by queueing, not by replicating pipelines. Conventional batching is
-not available for this pipeline type in this build and should not be assumed for
-future builds without re-measurement.
+arrangement, the clean re-runs show no sequential benefit from a second pipeline
+(1.88 vs 1.93 req/s), and it is the only arrangement where error semantics are fully
+predictable. A second worker gives a modest concurrent-latency improvement (16% under
+4 clients) at the cost of a second model load and NPU device memory — add it only if
+that trade is worth it for your workload. Scale by queueing, not by replicating
+pipelines. Conventional batching is not available for this pipeline type in this
+build and should not be assumed for future builds without re-measurement.
 
 ## Tests (no NPU required)
 

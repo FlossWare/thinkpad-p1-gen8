@@ -13,8 +13,8 @@ cd "$REPO_ROOT"
 source scripts/env.sh
 
 # Best measured configuration (2026-11-19):
-#   GENERATE_HINT=BEST_PERF  -> decode 41 tok/s (+25% vs FAST_COMPILE)
-#   MAX_PROMPT_LEN=64        -> TTFT 164 ms for short prompts (-38% vs 256)
+#   GENERATE_HINT=BEST_PERF  -> decode 44.6 tok/s (+22% vs FAST_COMPILE)
+#   MAX_PROMPT_LEN=64        -> TTFT 189 ms for short prompts (-36% vs 256)
 #   MIN_RESPONSE_LEN=64      -> plugin-aligned floor; sustains 128-token gens
 # First cold compile ~20 s; subsequent loads ~1.1 s from $NPUW_CACHE_DIR.
 export NPUW_BEST_CONFIG="MAX_PROMPT_LEN=64 MIN_RESPONSE_LEN=64 GENERATE_HINT=BEST_PERF"

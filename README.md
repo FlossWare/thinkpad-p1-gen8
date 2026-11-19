@@ -19,7 +19,7 @@ Status: complete (2026-11-19). Everything below refers to that project unless no
 
 - **NPUW path (primary)**: OpenVINO GenAI `LLMPipeline` on `device='NPU'`, running the
   original stateful Qwen3-0.6B INT4 OpenVINO IR end-to-end on the NPU, tuned to
-  **41 tokens/s decode** and **~170 ms time-to-first-token** for short prompts.
+  **45 tokens/s decode** and **~190 ms time-to-first-token** for short prompts.
 - **Correctness validated** against the same build running on CPU: 9 of 10 battery
   tests token-identical; the one divergence is a near-tie argmax flip from FP16
   precision (details and measured drift in
@@ -50,20 +50,19 @@ Full details, install layout, and the two mandatory workarounds:
 
 ### NPUW performance ([docs/npuw-tuning.md](docs/npuw-tuning.md))
 
-> **Pending re-measurement (issue #1).** The decode tok/s figures below were
-> measured with the streamer callback count as the numerator, which is not a
-> generated-token count. `benchmarks/benchmark.py` now counts generated token IDs;
-> these figures will be replaced after the re-runs listed in
-> [docs/npuw-tuning.md](docs/npuw-tuning.md). TTFT and compile times are unaffected.
+All figures use the token-ID accounting (issue #1: throughput is computed from
+generated token IDs, not streamer callback counts; re-measured 2026-11-19, rows
+`re-*` in [`benchmarks/results/results.jsonl`](benchmarks/results/results.jsonl)).
 
 | Configuration | TTFT | Decode | Cold compile |
 |---|---|---|---|
-| Baseline (`mpl=256`, default hints) | 266 ms | 33 tok/s | 6.2 s |
-| `GENERATE_HINT=BEST_PERF` | 262 ms | 41 tok/s | 19.8 s |
-| `MAX_PROMPT_LEN=64` + BEST_PERF (recommended) | **164–170 ms** | **41 tok/s** | 19.8 s (then ~1.1 s warm load) |
+| Baseline (`mpl=256`, default hints) | 297 ms | 36.5 tok/s | 6.2 s |
+| `GENERATE_HINT=BEST_PERF` | 317 ms | 42 tok/s | 19.8 s |
+| `MAX_PROMPT_LEN=64` + BEST_PERF (recommended) | **189 ms** | **45 tok/s** | 19.8 s (then ~1.1 s warm load) |
 
 - The previously circulated "13 tok/s" figure was a measurement artifact (TTFT folded
-  into the decode denominator); the corrected baseline is 33 tok/s.
+  into the decode denominator); a second correction (issue #1) replaced the streamer
+  callback count with the generated-token count (31 callbacks for 32 tokens is typical).
 - Chunked prefill was tested and was **slower** than static prefill for this
   workload (476 vs 691 tok/s prefill on a 349-token prompt) — not recommended here.
 

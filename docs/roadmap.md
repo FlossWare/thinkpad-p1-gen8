@@ -56,7 +56,7 @@ designed around them.
 
 | Fact | Source |
 |---|---|
-| NPUW Qwen3-0.6B INT4 decode is **41.1 tok/s** with `GENERATE_HINT=BEST_PERF`; baseline `FAST_COMPILE` is 32.9 tok/s (both pending re-measurement with token-ID accounting — see the note in the tuning doc). | [docs/npuw-tuning.md](npuw-tuning.md) |
+| NPUW Qwen3-0.6B INT4 decode is **44.6 tok/s** with `GENERATE_HINT=BEST_PERF` at mpl=64; baseline `FAST_COMPILE` is 36.5 tok/s (token-ID accounting, re-measured 2026-11-19). | [docs/npuw-tuning.md](npuw-tuning.md) |
 | TTFT is dominated by the shape bucket: **164–170 ms** at `MAX_PROMPT_LEN=64`, **266 ms** at 256. The plugin aligns the bucket up to multiples of 64; prompts longer than it are rejected, not truncated. | [docs/npuw-tuning.md](npuw-tuning.md) |
 | `BEST_PERF` costs **19.8 s cold compile** (per model/config/compiler cache key) and **~1.1 s warm load** from a persistent `CACHE_DIR`. | [docs/npuw-tuning.md](npuw-tuning.md) |
 | Chunked prefill is **slower** than static prefill at 0.6B (476 vs 691 tok/s on a 349-token prompt). | [docs/npuw-tuning.md](npuw-tuning.md) |
@@ -214,7 +214,7 @@ make, and nobody has measured the 512/1024 side.
 - 3 independent sessions per (bucket, turn-count) cell; median and min–max per turn
   index. 20 sequential requests per bucket for steady-state throughput.
 - Include a 5-repeat short-prompt run per bucket so the conversation numbers can be
-  tied back to the Project 1 baseline (164 ms / 41 tok/s at 64).
+  tied back to the Project 1 baseline (189 ms / 44.6 tok/s at mpl=64).
 
 **Metrics.** Per turn: `prompt_tokens`, `ttft_s`, `decode_tok_s`, `turn_wall_s`,
 `queue_wait_s`, `rss_mb`. Per session: `errors`, `fail_at_turn`, `peak_rss_mb`,
