@@ -68,7 +68,7 @@ future builds without re-measurement.
 ## Reproduce
 
 ```bash
-cd flossware-thinkpad-p1-gen8 && source scripts/env.sh
+cd thinkpad-p1-gen8 && source scripts/env.sh
 python3 serving/server.py --port 8931 --workers 1 &
 python3 serving/bench_serving.py --mode sequential --n 20
 python3 serving/bench_serving.py --mode concurrent --n 20 --clients 4

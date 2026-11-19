@@ -1,4 +1,4 @@
-# flossware-thinkpad-p1-gen8
+# thinkpad-p1-gen8
 
 Reproducible AI engineering experiments and measured capabilities on the
 **Lenovo ThinkPad P1 Gen 8** (Intel Core Ultra 7 265H, Intel NPU).
