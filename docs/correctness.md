@@ -36,7 +36,16 @@ CPU plugin of the same wheel. NPU side: NPUW with the tuned config
 | medium-nlp@32 | 23 | 32 | **100%** | — | +0.076 |
 | medium-nlp@64 | 23 | 64 | **100%** | — | +0.101 |
 | near-limit-193t@32 | 193 | 32 | **100%** | — | −0.034 |
-| near-limit-193t@128 | 193 | 128 | **100%** | — | −0.031 |
+| near-limit-193t@128 | 193 | 128 CPU / **127 NPU** | 100% of the 127 common tokens (not identical: NPU 1 token shorter) | — | −0.031 |
+
+Raw labels: the `near-limit-193t` rows are stored as `near-limit-250t@32` / `@128` in
+`validation-results.json` (the harness name predates the measured 193-token count).
+**Strict count: 8 of 10 battery tests are token-identical.** `near-limit-193t@128` is
+*not* identical: the NPU produced 127 tokens to the CPU's 128 (`token_comparison`
+`{n: 127, match_pct: 100.0, identical: false}`); the NPU sequence is an exact prefix of
+the CPU sequence. 193 + 127 = 320 = `MAX_PROMPT_LEN` (256) + `MIN_RESPONSE_LEN` (64), so
+this is consistent with the NPUW KV-cache capacity ending generation one token early —
+a hypothesis from the arithmetic, not verified against the plugin source here.
 
 ΔΣlogP = NPU sum-of-top-1-logprobs minus CPU, over the full generation. Magnitudes
 grow with length (−0.19 → −0.38 for 32 → 128 tokens) roughly linearly (~3e-3/token),
@@ -76,14 +85,17 @@ it. The repeated-token prompt shows the largest, matching the argmax-flip above.
 
 ## Practical impact
 
-- For real prompts, greedy NPU output is **token-identical to CPU** for the tested
-  battery up to 193-token prompts and 128-token generations.
+- For real prompts, greedy NPU output matched CPU token-for-token over every common
+  position in the tested battery (prompts up to 193 tokens, generations up to 128).
+  One such case (`near-limit-193t@128`) ended one token early on NPU (127 vs 128,
+  prompt + generation reaching the 320-token mpl + min-response capacity), so the
+  strictly identical count is 8 of 10.
 - Divergence risk concentrates in near-tie top-2 logits, which occur on degenerate
   (repeated-token) prompts; the flip produces a locally different but semantically
   equivalent continuation.
 - No evidence of KV-cache corruption, position-ID errors, or context-boundary
-  mishandling: near-limit prompts (193/256) match exactly, and overflow is cleanly
-  rejected.
+  mishandling: near-limit prompts (193/256) match CPU on every common token, and
+  overflow is cleanly rejected.
 
 ## Limitations (explicit)
 

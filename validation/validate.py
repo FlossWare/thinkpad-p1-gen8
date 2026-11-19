@@ -50,7 +50,7 @@ def build_prompts(tokenizer) -> dict[str, str]:
                        'and a graphics processing unit in the context of running '
                        'large language models.'),
         'near-limit-250t': filler * 8,   # ~193 tokens
-        'overflow-340t': filler * 12,    # ~349 tokens: must be rejected at mpl=256
+        'overflow-340t': filler * 12,    # 289 tokens (measured): must be rejected at mpl=256
     }
 
 
