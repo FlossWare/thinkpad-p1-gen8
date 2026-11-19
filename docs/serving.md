@@ -25,10 +25,15 @@ sequentially.
 - **Predictable errors**: over-length prompts (session history included) are rejected
   pre-queue with HTTP 400 and a specific message (`prompt_too_long: N tokens >
   MAX_PROMPT_LEN 64`); malformed/missing/invalid fields are rejected with 400 before
-  queueing; pipeline and tokenizer exceptions surface as HTTP 500 JSON; a request
+  queueing; a request whose prompt tokens (history included) plus `max_new_tokens`
+  exceed the NPUW KV window `MAX_PROMPT_LEN + MIN_RESPONSE_LEN` (64 + 64 = 128 by
+  default; reported as `kv_capacity` in `/health`) is rejected with 400
+  `exceeds_kv_capacity: ...` (see "KV-window capacity" below); pipeline and tokenizer exceptions surface as HTTP 500 JSON; a request
   not answered within 300 s gets HTTP 504 after 300 s (a still-queued request is then
   skipped; an in-flight one finishes but its result is discarded and never recorded); a full request queue (bounded, `--max-queue`/`QUEUE_MAX`, default 32) →
-  HTTP 429 `overloaded` and the request is not queued.
+  HTTP 429 `overloaded` and the request is not queued; admitting a *new* session
+  while all `--max-sessions` slots are active is likewise a 429 (see
+  "Session capacity and eviction" below).
 - **Ordering**: requests to the same session serialize in arrival order (history
   snapshot + generation + record are atomic; a request abandoned with 504 after the
   timeout is never recorded); different sessions may run
@@ -41,12 +46,66 @@ sequentially.
   logged and reported; HTTP handlers get until the drain deadline + 2 s to deliver
   their responses; the process then exits normally (no `os._exit`).
 - Endpoints: `POST /generate`, `POST /reset`, `GET /health`, `POST /shutdown`.
-- Known prototype limitations (not fixed): per-session history and gate objects are
-  kept for every distinct valid session id until process exit (no eviction), so
-  memory grows with the number of distinct sessions; on drain timeout, workers still
-  inside `generate()` are abandoned at interpreter exit (daemon threads), not finished;
+- **KV-window capacity (issue #13)**: NPUW generates at most
+  `MAX_PROMPT_LEN + MIN_RESPONSE_LEN − prompt_tokens` tokens and stops there without
+  any error (prefix-exact truncation; confirmed on the NPU, see
+  [npu-early-stop-investigation.md](npu-early-stop-investigation.md)). The
+  `max_new_tokens` range check alone ([1, 256]) would admit requests that are
+  certain to be truncated at the default `--max-prompt-len 64` (window 128), so the
+  server additionally rejects `prompt_tokens + max_new_tokens > kv_capacity` with 400
+  before queueing; the error states the at-most token count the request would have
+  received. Limitation: the server counts the raw prompt text, but `generate()`
+  applies the model's chat template, which adds tokens. The check therefore rejects
+  only certainly-truncated requests; an accepted request within a few template tokens
+  of the window can still come back shorter than `max_new_tokens` (the response
+  carries no truncation flag). For the same reason the `prompt_too_long` check is a
+  lower bound on the real model input length.
+- Known prototype limitations (not fixed): on drain timeout, workers still inside
+  `generate()` are abandoned at interpreter exit (daemon threads), not finished;
   `/health.requests_done` counts every dequeued request, including ones skipped after
   a client timeout.
+
+## Session capacity and eviction (issue #12)
+
+Retained session state is now **bounded**: each stored session owns one history list
+and one `SessionGate`, and the store keeps at most `--max-sessions`
+(env `SESSIONS_MAX`, **default 1024**) of them. The selected policy is *idle-based
+LRU eviction on admission* (not hard rejection of new sessions).
+
+- **Idle-time origin**: an entry's timestamp is the monotonic time of its last
+  *completed* operation (`SessionStore.finish`); a session that has not completed an
+  operation yet uses its creation time.
+- **Active means pinned**: an entry is active — and is never evicted or replaced —
+  from the moment admission takes its gate ticket until that ticket is released.
+  This covers waiting on the gate, work sitting in a worker queue, in-flight
+  generation, and `/reset`. A generation abandoned with HTTP 504 after the 300 s
+  timeout releases its ticket immediately (its result is never recorded), so it no
+  longer pins state.
+- **When eviction happens**: admitting a *new* session id while the store is at
+  capacity removes the idle entry with the oldest completion time (ties broken by
+  session id, so the choice is deterministic). Eviction removes the history and the
+  gate together.
+- **Atomic admission**: lookup-or-create, eviction and ticket acquisition happen in
+  one critical section. Concurrent first requests for the same new session therefore
+  share exactly one gate, and concurrent admissions can never exceed the configured
+  limit.
+- **All entries active**: if a request would need a new session and every stored
+  session is active, nothing is evicted and that request is rejected with HTTP 429
+  (`{"error": "overloaded: session capacity N reached; all N stored session(s) are
+  active"}`). Requests for already-stored sessions are unaffected.
+- **Client-visible behaviour**: eviction is not an error and is not reported to the
+  client. An evicted session id remains valid: its next `/generate` or `/reset`
+  creates fresh state (empty history) and is served normally (HTTP 200 / 200). The
+  client only observes that earlier context is gone (the new prompt is sent without
+  prior history). Clients that must preserve context across long idle gaps should
+  re-send it or increase `--max-sessions`.
+- **Diagnostics**: `GET /health` now includes `sessions` (currently stored entries),
+  `sessions_active` (entries holding or waiting for a ticket), `session_capacity`
+  (configured maximum) and `session_evictions` (cumulative since process start).
+- **Operational limit**: the LRU scan is O(number of stored sessions) and runs only
+  when a new session is admitted at capacity; with the default 1024 this is
+  negligible. Memory is bounded by `max-sessions × (history limit + gate)`, i.e. at
+  most 1024 sessions each capped at 1024 history tokens.
 
 ## Measurements
 

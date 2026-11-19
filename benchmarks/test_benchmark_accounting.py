@@ -13,8 +13,9 @@ Run either way:
 Core regression being protected: the streamer callback count must NOT be
 used as the generated-token count. The checked-in raw results show this
 build's text streamer is not 1:1 with tokens (32 requested tokens -> 30
-callbacks; 128 -> 101), so decode throughput must be derived from the token
-IDs in the GenAI EncodedResults object instead.
+callbacks; 128 requested (123 generated, issue #13) -> 101), so decode
+throughput must be derived from the token IDs in the GenAI EncodedResults
+object instead.
 """
 from __future__ import annotations
 
@@ -84,7 +85,8 @@ class FakePipeline:
 
     Emits ``n_generated`` token IDs in the result object but fires only
     ``n_callbacks`` streamer callbacks, reproducing the observed chunk
-    merging/skipping (raw results: 32 requested -> 30 callbacks, 128 -> 101).
+    merging/skipping (raw results: 32 requested -> 30 callbacks, 128 requested -> 101;
+    that run generated 123 tokens, issue #13).
     The callbacks are spread evenly across ``decode_span_s`` (first callback
     at first token), and generate() returns ``tail_s`` after the last
     callback (final detokenization overhead).

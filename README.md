@@ -63,6 +63,13 @@ not affect.
 | `GENERATE_HINT=BEST_PERF` | 317 ms | 42 tok/s | 19.8 s |
 | `MAX_PROMPT_LEN=64` + BEST_PERF (recommended) | **189 ms** | **45 tok/s** | 19.8 s (then ~1.1 s warm load) |
 
+- **Capacity rule:** the NPUW KV window is `MAX_PROMPT_LEN + MIN_RESPONSE_LEN` tokens,
+  prompt and generated combined (128 for the recommended 64 + 64). If
+  `prompt_tokens + max_new_tokens` exceeds it, the generation is **silently truncated**
+  (prefix-exact, no error) — e.g. a 5-token prompt asking for 128 tokens gets 123.
+  Raise `MIN_RESPONSE_LEN` for longer responses. Source-traced and confirmed on the NPU:
+  [docs/npu-early-stop-investigation.md](docs/npu-early-stop-investigation.md).
+
 - The previously circulated "13 tok/s" figure was a measurement artifact (TTFT folded
   into the decode denominator); a second correction (issue #1) replaced the streamer
   callback count with the generated-token count (31 callbacks for 32 tokens is typical).
@@ -76,7 +83,8 @@ not affect.
   repeated-token prompt, semantically equivalent output — the expected FP16 signature,
   not cache corruption. The tenth (`near-limit-193t@128`) matches on all 127 common
   tokens, but the NPU generated 127 tokens vs the CPU's 128 (193 + 127 = 320 =
-  `MAX_PROMPT_LEN` + `MIN_RESPONSE_LEN`).
+  `MAX_PROMPT_LEN` + `MIN_RESPONSE_LEN`) — expected KV-window capacity behavior,
+  source-traced and confirmed by NPU boundary probes (issue #13).
 - NPUW KV cache is **FP16** — verified by source inspection
   (`choose_kv_cache_storage_type()` default; `NPUW_LLM_OPTIMIZE_FP8=false`), not
   inferred from the INT4 weights. Activations are converted bf16→f16 model-wide.
@@ -120,6 +128,10 @@ python3 validation/validate.py                # CPU-vs-NPU correctness battery
 python3 serving/server.py --port 8931 &       # multi-session serving prototype
 ```
 
+With the default `MAX_PROMPT_LEN=64`/`MIN_RESPONSE_LEN=64`, keep
+`prompt_tokens + max_new_tokens ≤ 128`: beyond that NPUW truncates silently, and the
+serving prototype rejects such requests with HTTP 400 `exceeds_kv_capacity`.
+
 Two runtime gotchas discovered during the project (both bite silently):
 
 - The GenAI shared library lives under `runtime/lib/intel64/`, **not**
@@ -138,6 +150,23 @@ Two runtime gotchas discovered during the project (both bite silently):
 | [validation/](validation/) | `validate.py` + raw results (`results/validation-results.json`) |
 | [serving/](serving/) | multi-session serving prototype + benchmark client + raw results |
 | [hardware/](hardware/) | platform notes for the ThinkPad P1 Gen 8 |
+
+## Tests and CI
+
+Non-NPU unit tests run without OpenVINO, model weights, or NPU hardware:
+
+```bash
+python -m pytest serving/ benchmarks/ -q
+```
+
+This covers serving concurrency/queue/validation and benchmark token-accounting
+regression tests (stdlib only plus `pytest`). A GitHub Actions workflow
+([`.github/workflows/tests.yml`](.github/workflows/tests.yml)) runs the same
+tests on pushes to `main` and on pull requests (Python 3.14, `pytest` only, verbose
+output so a failing test is named in the log; a failing test fails the check).
+Hardware-dependent scripts (`benchmarks/benchmark.py`, `validation/validate.py`,
+`validation/boundary_probe.py`, `scripts/run-npuw.sh`, a live `serving/server.py`) need
+the NPU machine and are not part of CI.
 
 ## Evidence classification
 

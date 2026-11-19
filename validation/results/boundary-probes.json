@@ -1,0 +1,94 @@
+{
+ "ts": "2026-11-19T03:16:54",
+ "config": "mpl=256 mrl=64 BEST_PERF greedy",
+ "cases": [
+  {
+   "prompt_tokens": 5,
+   "max_new": 128,
+   "cpu_len": 128,
+   "npu_len": 128,
+   "prefix_match": false,
+   "sum_prompt_npu": 133
+  },
+  {
+   "prompt_tokens": 5,
+   "max_new": 190,
+   "cpu_len": 190,
+   "npu_len": 190,
+   "prefix_match": false,
+   "sum_prompt_npu": 195
+  },
+  {
+   "prompt_tokens": 5,
+   "max_new": 200,
+   "cpu_len": 200,
+   "npu_len": 200,
+   "prefix_match": false,
+   "sum_prompt_npu": 205
+  },
+  {
+   "prompt_tokens": 129,
+   "max_new": 128,
+   "cpu_len": 128,
+   "npu_len": 128,
+   "prefix_match": true,
+   "sum_prompt_npu": 257
+  },
+  {
+   "prompt_tokens": 191,
+   "max_new": 128,
+   "cpu_len": 128,
+   "npu_len": 128,
+   "prefix_match": true,
+   "sum_prompt_npu": 319
+  },
+  {
+   "prompt_tokens": 192,
+   "max_new": 128,
+   "cpu_len": 128,
+   "npu_len": 128,
+   "prefix_match": true,
+   "sum_prompt_npu": 320
+  },
+  {
+   "prompt_tokens": 193,
+   "max_new": 128,
+   "cpu_len": 128,
+   "npu_len": 127,
+   "prefix_match": true,
+   "sum_prompt_npu": 320
+  },
+  {
+   "prompt_tokens": 200,
+   "max_new": 128,
+   "cpu_len": 128,
+   "npu_len": 120,
+   "prefix_match": true,
+   "sum_prompt_npu": 320
+  },
+  {
+   "prompt_tokens": 193,
+   "max_new": 64,
+   "cpu_len": 64,
+   "npu_len": 64,
+   "prefix_match": true,
+   "sum_prompt_npu": 257
+  },
+  {
+   "prompt_tokens": 250,
+   "max_new": 64,
+   "cpu_len": 64,
+   "npu_len": 64,
+   "prefix_match": true,
+   "sum_prompt_npu": 314
+  },
+  {
+   "prompt_tokens": 256,
+   "max_new": 64,
+   "cpu_len": 64,
+   "npu_len": 64,
+   "prefix_match": true,
+   "sum_prompt_npu": 320
+  }
+ ]
+}

@@ -39,6 +39,29 @@ Ordering semantics (issue #4)
   are rejected immediately with HTTP 429 (no ticket taken, nothing mutated),
   so same-session floods cannot bypass the bounded queue.
 
+Session capacity and eviction (issue #12)
+-----------------------------------------
+* ``SessionStore`` is bounded: at most ``--max-sessions`` (env
+  ``SESSIONS_MAX``, default 1024) sessions retain history and a gate.
+* Admitting a *new* session while at capacity evicts the idle entry whose
+  last operation completed longest ago (LRU by completion time; creation
+  time is the origin for a session that never completed an operation).
+  Ties are broken by session id so eviction is deterministic.
+* An entry is **active** — and therefore pinned, never evictable — from the
+  moment admission takes its gate ticket until :meth:`SessionStore.finish`
+  releases it.  That covers waiting on the gate, queued work, in-flight
+  generation and reset.  A 504-abandoned generation releases its ticket
+  immediately (its result is never recorded), so it no longer pins state.
+* Admission (lookup-or-create, eviction, ticket) is a single critical
+  section, so concurrent first requests for one session share exactly one
+  gate and the limit can never be bypassed.
+* If **every** stored session is active, a request for a new session is
+  rejected with HTTP 429 (``overloaded: session capacity ...``); nothing is
+  evicted and existing sessions are unaffected.
+* Eviction is invisible to the client: an evicted session id stays valid,
+  the next request creates fresh state (empty history) and is served
+  normally — never a 4xx just because the session was evicted.
+
 Queueing and validation (issue #7)
 ----------------------------------
 * Every worker has a bounded FIFO queue: ``--max-queue`` (default 32),
@@ -50,6 +73,21 @@ Queueing and validation (issue #7)
   ``session`` a non-empty printable string of at most 128 characters;
   ``prompt`` a non-empty string; ``max_new_tokens`` an int (not a bool) in
   [1, 256].  Violations return HTTP 400 and mutate nothing.
+
+KV-cache capacity (issue #13)
+-----------------------------
+* The NPUW KV window holds ``MAX_PROMPT_LEN + MIN_RESPONSE_LEN`` tokens
+  (prompt + generated combined; 64 + 64 = 128 by default).  GenAI stops a
+  generation gracefully when it reaches that window, returning a shorter,
+  prefix-exact response with no error (docs/npu-early-stop-investigation.md,
+  validation/results/boundary-probes.json).
+* So that this truncation is never silent, a request whose counted prompt
+  tokens (history included) plus ``max_new_tokens`` exceed that capacity is
+  rejected with HTTP 400 ``exceeds_kv_capacity: ...`` before queueing.
+* The counted prompt is the raw text; ``generate()`` additionally applies the
+  model's chat template, which adds tokens.  The check therefore rejects only
+  requests that would certainly be truncated; an accepted request close to
+  the boundary may still receive fewer than ``max_new_tokens`` tokens.
 
 Shutdown policy (issue #3)
 --------------------------
@@ -75,12 +113,15 @@ Endpoints:
   POST /generate        {"session": "id", "prompt": "...", "max_new_tokens": 32}
   POST /reset           {"session": "id"}
   GET  /health          {"ok": true, "requests_done": [...], "queue_depth": [...],
-                         "queue_capacity": [...], "queue_depth_total": N, ...}
+                         "queue_capacity": [...], "queue_depth_total": N,
+                         "sessions": N, "sessions_active": N,
+                         "session_capacity": N, "session_evictions": N,
+                         "kv_capacity": N, ...}
   POST /shutdown        orderly shutdown
 
 Usage:
   server.py [--port 8931] [--workers 1] [--max-prompt-len 64]
-            [--max-queue 32] [--drain-timeout 30]
+            [--max-queue 32] [--max-sessions 1024] [--drain-timeout 30]
 """
 from __future__ import annotations
 
@@ -107,6 +148,9 @@ HISTORY_LIMIT_TOKENS = 1024  # sessions refuse to grow beyond this
 MAX_SESSION_ID_LEN = 128
 MAX_NEW_TOKENS_MIN = 1
 MAX_NEW_TOKENS_MAX = 256
+# Passed to the pipeline as MIN_RESPONSE_LEN; with MAX_PROMPT_LEN it fixes the
+# NPUW KV window (prompt + generated tokens) -- see "KV-cache capacity".
+MIN_RESPONSE_LEN = 64
 MAX_BODY_BYTES = 1 << 20
 GENERATE_TIMEOUT_S = 300.0
 # Max operations (holding + waiting) per session gate.  Requests waiting on a
@@ -136,6 +180,9 @@ def _env_float(name: str, default: float) -> float:
 
 DEFAULT_MAX_QUEUE = max(1, _env_int('QUEUE_MAX', 32))
 DEFAULT_DRAIN_TIMEOUT_S = max(0.0, _env_float('DRAIN_TIMEOUT_S', 30.0))
+# Upper bound on retained session state (history + gate).  See the module
+# docstring for the eviction policy (issue #12).
+DEFAULT_MAX_SESSIONS = max(1, _env_int('SESSIONS_MAX', 1024))
 
 
 class WorkerStopping(Exception):
@@ -166,6 +213,9 @@ class Worker:
             raise ValueError('queue_max must be >= 1')
         self.id = worker_id
         self.max_prompt_len = max_prompt_len
+        # GenAI reads the configured (unaligned) values back from the compiled
+        # model, so this is the exact prompt+generated stop boundary (#13).
+        self.kv_capacity = max_prompt_len + MIN_RESPONSE_LEN
         self.queue_max = queue_max
         self.q: 'queue.Queue[dict | object]' = queue.Queue(maxsize=queue_max)
         self.requests_done = 0
@@ -176,7 +226,7 @@ class Worker:
         self._in_flight: dict | None = None
 
         t0 = time.perf_counter()
-        props = dict(MAX_PROMPT_LEN=max_prompt_len, MIN_RESPONSE_LEN=64,
+        props = dict(MAX_PROMPT_LEN=max_prompt_len, MIN_RESPONSE_LEN=MIN_RESPONSE_LEN,
                      GENERATE_HINT='BEST_PERF')
         cache = os.environ.get('NPUW_CACHE_DIR')
         if cache:
@@ -195,8 +245,12 @@ class Worker:
         self.thread.start()
 
     def _count_with_tokenizer(self, text: str) -> int:
-        import numpy as np
-        return int(np.asarray(self.tokenizer.encode(text).input_ids.data).size)
+        # ov.Tensor.data is a numpy ndarray (.size = element count); plain
+        # sequences (test stubs) fall back to len().  No numpy import, so the
+        # stub-based tests and CI need only pytest (issue #14).
+        data = self.tokenizer.encode(text).input_ids.data
+        size = getattr(data, 'size', None)
+        return int(size) if size is not None else len(data)
 
     def count_tokens(self, text: str) -> int:
         return self._token_counter(text)
@@ -295,11 +349,15 @@ class SessionGate:
         self._next_ticket = 0
         self._now_serving = 0
 
-    def acquire(self, max_pending: int | None = None) -> int | None:
-        """Take a ticket and wait for it to be served.
+    def try_acquire(self, max_pending: int | None = None) -> int | None:
+        """Take a ticket without waiting for it to be served.
 
         Returns ``None`` (without taking a ticket) if ``max_pending``
-        operations already hold or wait for this gate.
+        operations already hold or wait for this gate.  The caller waits with
+        :meth:`wait` and must eventually :meth:`release`.  Splitting ticket
+        acquisition from waiting lets ``SessionStore`` take the ticket inside
+        its admission critical section, which pins the entry against
+        eviction before any other thread can observe it.
         """
         with self._cond:
             if (max_pending is not None
@@ -307,9 +365,25 @@ class SessionGate:
                 return None
             ticket = self._next_ticket
             self._next_ticket += 1
+            return ticket
+
+    def wait(self, ticket: int) -> None:
+        """Block until ``ticket`` is the one being served."""
+        with self._cond:
             while ticket != self._now_serving:
                 self._cond.wait()
-            return ticket
+
+    def acquire(self, max_pending: int | None = None) -> int | None:
+        """Take a ticket and wait for it to be served (convenience form).
+
+        ``SessionStore.acquire`` splits these two steps so the ticket can be
+        taken inside its admission critical section.
+        """
+        ticket = self.try_acquire(max_pending)
+        if ticket is None:
+            return None
+        self.wait(ticket)
+        return ticket
 
     def release(self) -> None:
         with self._cond:
@@ -326,50 +400,167 @@ class HistoryLimitError(ValueError):
     """A session's history plus the new prompt exceeds HISTORY_LIMIT_TOKENS."""
 
 
-class SessionStore:
-    """Explicit per-session history; requests are self-contained.
+class SessionCapacityError(RuntimeError):
+    """A new session cannot be admitted: every stored session is active."""
 
-    ``build_prompt``/``record``/``reset`` are each atomic, but callers that
-    need a consistent read-modify-write cycle (the /generate handler) must
-    additionally hold the session's :class:`SessionGate`.  The internal lock
-    only protects the shared dictionaries.
+
+class SessionEntry:
+    """One retained session: its gate, history and idle timestamp.
+
+    ``last_done`` is the monotonic time of the last *completed* operation and
+    is the origin for idle-based LRU eviction (creation time until the first
+    operation completes).  ``history`` and ``gate`` are removed together when
+    the entry is evicted.
     """
 
-    def __init__(self) -> None:
+    __slots__ = ('session', 'gate', 'history', 'last_done')
+
+    def __init__(self, session: str, now: float) -> None:
+        self.session = session
+        self.gate = SessionGate()
+        self.history: list[str] = []
+        self.last_done = now
+
+
+class SessionStore:
+    """Bounded per-session history and gates; requests are self-contained.
+
+    Admission and eviction happen atomically under ``_lock``: :meth:`acquire`
+    looks up or creates the entry, evicts the idle LRU entry if a new session
+    would exceed ``max_sessions``, and takes the session's gate ticket before
+    the lock is released.  Taking the ticket inside the critical section
+    means a newly admitted entry is already *active* (pinned) when another
+    thread can first see it, so it can never be evicted between creation and
+    :meth:`wait`.
+
+    ``finish`` must be called exactly once per successful :meth:`acquire`; it
+    records the completion time and releases the ticket.  The internal lock
+    is only ever taken before a gate's condition (never the reverse), so
+    there is no lock-order inversion.
+
+    ``clock`` is injectable so tests can make idle ordering deterministic.
+    """
+
+    def __init__(self, max_sessions: int = DEFAULT_MAX_SESSIONS, clock=None) -> None:
+        if max_sessions < 1:
+            raise ValueError('max_sessions must be >= 1')
         self._lock = threading.Lock()
-        self._history: dict[str, list[str]] = {}
-        self._gates: dict[str, SessionGate] = {}
+        self._entries: dict[str, SessionEntry] = {}
+        self._max_sessions = max_sessions
+        self._evictions = 0
+        self._clock = clock or time.monotonic
+
+    @property
+    def max_sessions(self) -> int:
+        return self._max_sessions
+
+    def _idle_lru(self) -> SessionEntry | None:
+        """Least-recently-completed entry with no ticket held or waiting.
+
+        Caller holds ``_lock``.  ``(last_done, session)`` makes the choice
+        deterministic even if the clock has coarse resolution.
+        """
+        victim = None
+        for entry in self._entries.values():
+            if entry.gate.pending() != 0:
+                continue
+            if victim is None or ((entry.last_done, entry.session)
+                                  < (victim.last_done, victim.session)):
+                victim = entry
+        return victim
+
+    def _get_or_create_entry(self, session: str) -> SessionEntry:
+        """Look up a session, admitting a new one (evicting if needed).
+
+        Caller holds ``_lock``.  Raises :class:`SessionCapacityError` when a
+        new session is requested while every stored session is active.
+        """
+        entry = self._entries.get(session)
+        if entry is not None:
+            return entry
+        if len(self._entries) >= self._max_sessions:
+            victim = self._idle_lru()
+            if victim is None:
+                raise SessionCapacityError(
+                    f'session capacity {self._max_sessions} reached; all '
+                    f'{len(self._entries)} stored session(s) are active')
+            del self._entries[victim.session]
+            self._evictions += 1
+        entry = SessionEntry(session, self._clock())
+        self._entries[session] = entry
+        return entry
+
+    def acquire(self, session: str,
+                max_pending: int | None = None) -> tuple[SessionEntry | None, int | None]:
+        """Admit ``session`` and take its gate ticket atomically.
+
+        Returns ``(entry, ticket)``; ``(None, None)`` if ``max_pending``
+        operations already hold or wait for this session.  Raises
+        :class:`SessionCapacityError` if admitting a new session would exceed
+        ``max_sessions`` and nothing is evictable.
+        """
+        with self._lock:
+            entry = self._get_or_create_entry(session)
+            ticket = entry.gate.try_acquire(max_pending)
+            if ticket is None:
+                return None, None
+            return entry, ticket
+
+    def finish(self, entry: SessionEntry) -> None:
+        """Record completion time and release the entry's gate ticket."""
+        with self._lock:
+            entry.last_done = self._clock()
+            entry.gate.release()
 
     def gate(self, session: str) -> SessionGate:
-        with self._lock:
-            gate = self._gates.get(session)
-            if gate is None:
-                gate = self._gates[session] = SessionGate()
-            return gate
+        """Diagnostic/test hook: the session's gate (admitting it if absent).
 
-    def build_prompt(self, session: str, prompt: str, counter) -> tuple[str, int]:
+        Production request paths must use :meth:`acquire`, which takes a
+        ticket in the same critical section as admission.
+        """
+        with self._lock:
+            return self._get_or_create_entry(session).gate
+
+    def build_prompt(self, entry: SessionEntry, prompt: str,
+                     counter) -> tuple[str, int]:
         """Return (full prompt, token count) without mutating the history."""
         with self._lock:
-            hist = self._history.get(session, [])
-            full = ''.join(hist) + prompt
+            full = ''.join(entry.history) + prompt
             n_tok = counter(full)
             if n_tok > HISTORY_LIMIT_TOKENS:
                 raise HistoryLimitError(f'session history ({n_tok} tokens) exceeds '
                                  f'{HISTORY_LIMIT_TOKENS}-token limit; reset the session')
             return full, n_tok
 
-    def record(self, session: str, prompt: str, answer: str) -> None:
+    def record(self, entry: SessionEntry, prompt: str, answer: str) -> None:
         with self._lock:
-            self._history.setdefault(session, []).extend([prompt, answer])
+            entry.history.extend([prompt, answer])
 
-    def reset(self, session: str) -> None:
+    def reset(self, target: SessionEntry | str) -> None:
+        """Clear a session's history (accepts an entry or a session id)."""
         with self._lock:
-            self._history.pop(session, None)
+            entry = (self._entries.get(target) if isinstance(target, str)
+                     else target)
+            if entry is not None:
+                entry.history.clear()
 
     def history(self, session: str) -> list[str]:
         """Snapshot of a session's history (used by tests and diagnostics)."""
         with self._lock:
-            return list(self._history.get(session, []))
+            entry = self._entries.get(session)
+            return list(entry.history) if entry is not None else []
+
+    def stats(self) -> dict:
+        """Capacity diagnostics for /health (issue #12)."""
+        with self._lock:
+            active = sum(1 for e in self._entries.values()
+                         if e.gate.pending() != 0)
+            return {
+                'sessions': len(self._entries),
+                'sessions_active': active,
+                'session_capacity': self._max_sessions,
+                'session_evictions': self._evictions,
+            }
 
 
 class ServerState:
@@ -555,6 +746,8 @@ def make_handler(state: ServerState):
                     'queue_depth_total': state.queue_depth(),
                     'queue_capacity_total': state.queue_capacity(),
                     'busy': [w.busy() for w in state.workers],
+                    'kv_capacity': state.workers[0].kv_capacity,
+                    **state.sessions.stats(),
                 })
             else:
                 self._json(404, {'error': 'not_found'})
@@ -596,19 +789,26 @@ def make_handler(state: ServerState):
             if err is not None:
                 self._json(400, {'error': err})
                 return
-            gate = state.sessions.gate(session)
+            try:
+                entry, ticket = state.sessions.acquire(
+                    session, state.max_session_pending)
+            except SessionCapacityError as e:
+                self._json(429, {'error': f'overloaded: {e}'})
+                return
             # Waits for earlier same-session operations (bounded, see
-            # MAX_SESSION_PENDING).
-            if gate.acquire(state.max_session_pending) is None:
+            # MAX_SESSION_PENDING).  The ticket was taken atomically with
+            # admission, so the entry cannot be evicted while we wait.
+            if entry is None:
                 self._session_overloaded()
                 return
+            entry.gate.wait(ticket)
             try:
                 if state.shutdown:
                     self._json(503, {'error': 'shutting_down'})
                     return
-                state.sessions.reset(session)
+                state.sessions.reset(entry)
             finally:
-                gate.release()
+                state.sessions.finish(entry)
             self._json(200, {'ok': True})
 
         def _handle_generate(self, payload: dict) -> None:
@@ -625,11 +825,19 @@ def make_handler(state: ServerState):
                 self._json(400, {'error': err})
                 return
 
-            gate = state.sessions.gate(session)
+            try:
+                entry, ticket = state.sessions.acquire(
+                    session, state.max_session_pending)
+            except SessionCapacityError as e:
+                self._json(429, {'error': f'overloaded: {e}'})
+                return
             # FIFO: same-session operations are ordered (bounded wait list).
-            if gate.acquire(state.max_session_pending) is None:
+            # The ticket was taken atomically with admission, so the entry
+            # stays pinned (unevictable) from creation through completion.
+            if entry is None:
                 self._session_overloaded()
                 return
+            entry.gate.wait(ticket)
             try:
                 if state.shutdown:
                     self._json(503, {'error': 'shutting_down'})
@@ -638,7 +846,7 @@ def make_handler(state: ServerState):
                 counter = state.workers[0].count_tokens
                 try:
                     full_prompt, n_tok = state.sessions.build_prompt(
-                        session, prompt, counter)
+                        entry, prompt, counter)
                 except HistoryLimitError as e:
                     self._json(400, {'error': str(e)})
                     return
@@ -654,6 +862,21 @@ def make_handler(state: ServerState):
                         'error': f'prompt_too_long: {n_tok} tokens > MAX_PROMPT_LEN '
                                  f'{state.workers[0].max_prompt_len}; '
                                  f'reset session or shorten',
+                    })
+                    return
+
+                capacity = state.workers[0].kv_capacity
+                if n_tok + max_new > capacity:
+                    # NPUW would stop at capacity - n_tok tokens without any
+                    # error (issue #13); refuse instead of truncating silently.
+                    self._json(400, {
+                        'error': f'exceeds_kv_capacity: {n_tok} prompt tokens + '
+                                 f'max_new_tokens {max_new} > MAX_PROMPT_LEN + '
+                                 f'MIN_RESPONSE_LEN = {capacity}; the response '
+                                 f'would be truncated to at most '
+                                 f'{capacity - n_tok} tokens. Lower '
+                                 f'max_new_tokens, shorten/reset the session, or '
+                                 f'raise MIN_RESPONSE_LEN',
                     })
                     return
 
@@ -685,11 +908,13 @@ def make_handler(state: ServerState):
                 if 'error' in req:
                     self._json(req.get('status', 500), {'error': req['error']})
                     return
-                state.sessions.record(session, prompt, req['result']['text'])
+                state.sessions.record(entry, prompt, req['result']['text'])
                 self._json(200, {'session': session, 'prompt_tokens': n_tok,
                                  **req['result']})
             finally:
-                gate.release()
+                # Records completion time and releases the ticket; after this
+                # the entry may be evicted by a later admission.
+                state.sessions.finish(entry)
 
     return Handler
 
@@ -808,16 +1033,22 @@ def main() -> None:
     ap.add_argument('--max-queue', type=int, default=DEFAULT_MAX_QUEUE,
                     help='bounded per-worker request queue capacity '
                          f'(default {DEFAULT_MAX_QUEUE}; env QUEUE_MAX)')
+    ap.add_argument('--max-sessions', type=int, default=DEFAULT_MAX_SESSIONS,
+                    help='maximum retained sessions (history + gate); idle LRU '
+                         'entries are evicted on admission '
+                         f'(default {DEFAULT_MAX_SESSIONS}; env SESSIONS_MAX)')
     ap.add_argument('--drain-timeout', type=float, default=DEFAULT_DRAIN_TIMEOUT_S,
                     help='seconds to wait for in-flight work during shutdown '
                          f'(default {DEFAULT_DRAIN_TIMEOUT_S}; env DRAIN_TIMEOUT_S)')
     args = ap.parse_args()
     if args.max_queue < 1:
         ap.error('--max-queue must be >= 1')
+    if args.max_sessions < 1:
+        ap.error('--max-sessions must be >= 1')
     if args.drain_timeout < 0:
         ap.error('--drain-timeout must be >= 0')
 
-    sessions = SessionStore()
+    sessions = SessionStore(max_sessions=args.max_sessions)
     workers: list[Worker] = []
     for i in range(args.workers):
         t0 = time.perf_counter()
@@ -836,7 +1067,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _on_signal)
     print(f'[server] listening on 127.0.0.1:{args.port} '
           f'({args.workers} worker(s), mpl={args.max_prompt_len}, '
-          f'queue={args.max_queue})', flush=True)
+          f'queue={args.max_queue}, max_sessions={args.max_sessions})', flush=True)
     try:
         httpd.serve_forever()
     finally:
