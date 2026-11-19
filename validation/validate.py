@@ -14,7 +14,9 @@ Reports token agreement, first divergence, per-step logprob deltas
 Full per-step logits are NOT exposed by this GenAI build (no logit_processor
 hook; scores is a sequence sum under greedy). The manual static-blob path
 (~/AI/ovfix-static-blob) remains the source of direct logit-level comparison
-(last-token cosine 0.9916 vs CPU, measured 2026-11-18).
+(cosine similarity of the last-position logit vector 0.9916 vs CPU, measured
+2026-11-18). The 'cosine' reported by THIS script is different: see
+compare_logprobs().
 
 Usage: validate.py [--out results.json] [--quick]
 """
@@ -121,7 +123,11 @@ def compare_logprobs(ref, test):
         return None
     diffs = [abs(a - b) for a, b in pairs]
     rel = [abs(a - b) / max(abs(a), 1e-6) for a, b in pairs]
-    # cosine over the two logprob sequences
+    # 'cosine' = cosine similarity between the two vectors of per-step top-1
+    # log-probabilities (one element per compared step; each element is
+    # log P of the token that device chose at that step). NOT a logit or
+    # full-vocabulary cosine. Key name kept for compatibility with
+    # validation/results/validation-results.json.
     dot = sum(a * b for a, b in pairs)
     na = math.sqrt(sum(a * a for a, _ in pairs))
     nb = math.sqrt(sum(b * b for _, b in pairs))
