@@ -139,6 +139,20 @@ Two runtime gotchas discovered during the project (both bite silently):
 | [serving/](serving/) | multi-session serving prototype + benchmark client + raw results |
 | [hardware/](hardware/) | platform notes for the ThinkPad P1 Gen 8 |
 
+## Tests and CI
+
+Non-NPU unit tests run without OpenVINO, model weights, or NPU hardware:
+
+```bash
+python -m pytest serving/ benchmarks/ -q
+```
+
+This covers serving concurrency/queue/validation and benchmark token-accounting
+regression tests (stdlib only plus `pytest`). A GitHub Actions workflow
+([`.github/workflows/tests.yml`](.github/workflows/tests.yml)) runs the same
+command on pushes to `main` and on pull requests (Python 3.13, `pytest` only).
+Hardware-dependent benchmarks and smoke tests are not part of CI.
+
 ## Evidence classification
 
 - **Verified**: everything in the results tables above, with raw JSON in the `results/` directories. Device

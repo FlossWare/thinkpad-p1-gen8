@@ -126,19 +126,49 @@ These follow the patterns already used by `benchmarks/results/`,
 
 ## Measurement rules (fixed before any comparison)
 
+These rules follow the validated token-accounting methodology implemented in
+[`benchmarks/token_accounting.py`](../benchmarks/token_accounting.py) and
+[`benchmarks/benchmark.py`](../benchmarks/benchmark.py) (Project 1, issue #1).
+Raw measured results for that implementation are in
+[`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl) (rows
+`re-*`; older `baseline-*`/`e*` rows used the superseded callback-count
+numerator and must not be mixed with `re-*` in one comparison) and
+[`serving/results/serving-results.jsonl`](../serving/results/serving-results.jsonl).
+
 - **Warm-up:** one uncounted generation (`max_new_tokens=2`, greedy) per pipeline
   instance before timed runs. Cold compile is measured once per (model, config,
   compiler) cache key with a throwaway `CACHE_DIR`; warm load is measured with the
   persistent cache. First-inference effects on a new device (notably GPU kernel
   compilation) are reported as a separate `first_infer_s`, not folded into TTFT.
-- **Timing boundaries:**
+- **Timing boundaries — four distinct metrics:**
   - *load/compile* — from immediately before the `LLMPipeline(...)` constructor to
     immediately after it returns.
-  - *TTFT* — from entry to `generate()` until the first streamer callback. Tokenization
-    happens outside the timed region; prompt token count is recorded separately.
-  - *decode* — `(n_chunks − 1) / (last_chunk_time − first_chunk_time)`, per token.
-  - *turn wall* — HTTP submit to response completion, reported separately from TTFT so
-    queue wait and transport are visible.
+  - *TTFT (time to first token)* — from `generate()` entry (`t_gen0`) until the
+    first streamer callback (`token_times[0]`). Tokenization happens outside the
+    timed region; prompt token count is recorded separately.
+  - *Prefill throughput* — `prompt_tokens / TTFT`, where `prompt_tokens` is the
+    tokenizer `encode()` length of the prompt. No generated tokens are included in
+    this numerator.
+  - *Decode throughput* — `(generated_tokens − 1) / (t_gen_end − token_times[0])`,
+    where `generated_tokens` is `len(result.tokens[0])` from the `EncodedResults`
+    object returned by `generate(TokenizedInputs, ...)` and `t_gen_end` is the
+    perf-counter timestamp immediately after `generate()` returns. The interval is
+    **first streamer callback → `generate()` return**, not last-callback, and the
+    numerator is **generated token IDs minus one**, not a callback count.
+  - *End-to-end turn wall* — HTTP submit to response completion, reported
+    separately from TTFT so queue wait and transport are visible. This is the only
+    metric that includes queueing; TTFT and decode are measured inside
+    `generate()` and do not include it.
+- **Why callback/chunk counts are not token counts on this build:** the text
+  streamer delivers text chunks, not tokens. On this build it merges and skips
+  chunks: measured 32 requested tokens → 30 callbacks and 128 → 101 callbacks
+  (see `benchmarks/results/results.jsonl`). Using `n_chunks` or
+  `len(token_times)` as the decode numerator materially over- or under-counts
+  tokens (up to ~25% divergence at 128 tokens). Callback counts are therefore
+  recorded only as `streamer_chunks` reference data, never as a throughput
+  numerator. See `benchmarks/token_accounting.py` for the accounting rules and
+  the known limitation that the first callback is assumed to mark the first
+  generated token.
 - **Repetitions:** at least 5 timed generations per configuration, across at least 2
   process launches where load behavior matters; report **median and min–max**, never a
   single run. M1 additionally uses at least 3 independent sessions per configuration.
@@ -149,6 +179,11 @@ These follow the patterns already used by `benchmarks/results/`,
   tokenizer, matching Project 1's methodology.
 - **Reporting:** measured facts, interpretation, and hypotheses are separate sections in
   every results document, and the single-machine limitation is restated there.
+- **Methodology-change rule:** if a future runtime exposes a different reliable
+  timing interface (e.g., per-token timestamps, a new result field), the change
+  must be documented in this file with a date and rationale, old and new results
+  kept in separate, clearly labeled result sets, and never silently mixed in one
+  throughput comparison. Historical results keep their original accounting label.
 
 ---
 
