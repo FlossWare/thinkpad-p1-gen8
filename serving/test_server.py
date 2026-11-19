@@ -6,12 +6,15 @@ real ``genai.LLMPipeline`` is replaced by :class:`StubPipeline`, injected
 through :class:`server.Worker`'s ``pipeline_factory``/``token_counter`` hooks.
 The HTTP server is started in-process on an ephemeral port.
 
-Covered behaviour (issues #3, #4, #7):
+Covered behaviour (issues #3, #4, #7, #12):
   * same-session requests serialize in arrival order and history is atomic;
   * different sessions execute concurrently (two workers);
   * reset waits for earlier same-session work, then clears history;
   * bounded queue saturation returns 429 without queueing or mutating state;
   * malformed / missing / out-of-range fields return 400 before queueing;
+  * session state is bounded by max_sessions with idle LRU eviction, active
+    sessions are pinned, concurrent admission never duplicates gates or
+    exceeds the limit, and /health reports capacity/eviction counters;
   * orderly shutdown cancels queued work (503), finishes in-flight work,
     reports drain timeouts, is idempotent and never uses os._exit();
   * pipeline exceptions surface as 500 and do not kill the worker.
@@ -95,8 +98,10 @@ class Harness:
 
     def __init__(self, pipelines, max_queue: int = 8,
                  drain_timeout_s: float = 5.0, max_prompt_len: int = 64,
-                 token_counter=None):
-        self.sessions = server.SessionStore()
+                 token_counter=None, max_sessions: int = 1024,
+                 session_clock=None):
+        self.sessions = server.SessionStore(
+            max_sessions=max_sessions, clock=session_clock)
         self.workers = [
             server.Worker(
                 i, max_prompt_len, queue_max=max_queue,
@@ -801,6 +806,233 @@ class HealthAndProtocolTest(unittest.TestCase):
             self.assertEqual(h.post('/nope', {})[0], 404)
         finally:
             h.close()
+
+
+class FakeClock:
+    """Strictly increasing monotonic clock (deterministic idle ordering)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._now = 0.0
+
+    def __call__(self) -> float:
+        with self._lock:
+            self._now += 1.0
+            return self._now
+
+
+class SessionCapacityTest(unittest.TestCase):
+    """Issue #12: bounded session state with idle LRU eviction."""
+
+    def test_idle_lru_evicts_oldest_completed_and_evicted_id_starts_fresh(self):
+        clock = FakeClock()
+        pipe = StubPipeline()
+        h = Harness([pipe], max_queue=4, max_sessions=3, session_clock=clock)
+        try:
+            for i in range(1, 4):
+                code, body = h.post('/generate',
+                                    {'session': f's{i}', 'prompt': f'p{i}'})
+                self.assertEqual(code, 200, body)
+            # Touch s1 so s2 is the least recently *completed* session.
+            self.assertEqual(h.post('/generate',
+                                    {'session': 's1', 'prompt': 'again'})[0], 200)
+
+            health = h.get('/health')[1]
+            self.assertEqual(health['sessions'], 3)
+            self.assertEqual(health['sessions_active'], 0)
+            self.assertEqual(health['session_capacity'], 3)
+            self.assertEqual(health['session_evictions'], 0)
+
+            code, body = h.post('/generate', {'session': 's4', 'prompt': 'p4'})
+            self.assertEqual(code, 200, body)
+            health = h.get('/health')[1]
+            self.assertEqual(health['sessions'], 3)
+            self.assertEqual(health['session_evictions'], 1)
+            self.assertEqual(h.state.sessions.history('s2'), [],
+                             'least recently completed idle session should be evicted')
+            self.assertEqual(len(h.state.sessions.history('s1')), 4)
+            self.assertEqual(len(h.state.sessions.history('s3')), 2)
+            self.assertEqual(len(h.state.sessions.history('s4')), 2)
+
+            # An evicted-but-valid session id is not an error: it is admitted
+            # fresh (empty history) and served normally.
+            calls_before = len(pipe.snapshot_calls())
+            code, body = h.post('/generate', {'session': 's2', 'prompt': 'fresh'})
+            self.assertEqual(code, 200, body)
+            self.assertEqual(pipe.snapshot_calls()[calls_before], 'fresh',
+                             'evicted session must restart with an empty history')
+            self.assertEqual(h.state.sessions.history('s2'), ['fresh', body['text']])
+            self.assertEqual(h.get('/health')[1]['session_evictions'], 2)
+        finally:
+            h.close()
+
+    def test_active_session_is_pinned_and_new_session_rejected_when_all_active(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def block(prompt, index):  # noqa: ARG001
+            if index == 1:
+                started.set()
+                release.wait(timeout=10)
+
+        pipe = StubPipeline(block=block)
+        h = Harness([pipe], max_queue=4, max_sessions=1)
+        try:
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                fbusy = ex.submit(h.post, '/generate',
+                                  {'session': 'busy', 'prompt': 'A'})
+                self.assertTrue(started.wait(5), 'generation did not start')
+                # A same-session waiter also pins the entry (it holds a ticket).
+                fwait = ex.submit(h.post, '/generate',
+                                  {'session': 'busy', 'prompt': 'B'})
+                wait_until(lambda: h.state.sessions.gate('busy').pending() == 2,
+                           message='second operation waiting on the gate')
+
+                code, body = h.post('/generate',
+                                    {'session': 'new', 'prompt': 'N'})
+                self.assertEqual(code, 429, body)
+                self.assertIn('session capacity', body['error'])
+                # Attempted eviction of the busy session was a no-op.
+                health = h.get('/health')[1]
+                self.assertEqual(health['sessions'], 1)
+                self.assertEqual(health['sessions_active'], 1)
+                self.assertEqual(health['session_evictions'], 0)
+                self.assertEqual(health['requests_done'], [0])
+                self.assertEqual(h.state.sessions.history('new'), [])
+
+                release.set()
+                self.assertEqual(fbusy.result(timeout=10)[0], 200)
+                self.assertEqual(fwait.result(timeout=10)[0], 200)
+
+            self.assertEqual(len(h.state.sessions.history('busy')), 4)
+            self.assertEqual(h.get('/health')[1]['session_evictions'], 0)
+
+            # Once idle, the single slot is evictable and 'new' is admitted.
+            code, body = h.post('/generate', {'session': 'new', 'prompt': 'N'})
+            self.assertEqual(code, 200, body)
+            health = h.get('/health')[1]
+            self.assertEqual(health['sessions'], 1)
+            self.assertEqual(health['session_evictions'], 1)
+            self.assertEqual(h.state.sessions.history('busy'), [])
+        finally:
+            release.set()
+            h.close()
+
+    def test_concurrent_first_requests_share_one_gate(self):
+        n = 8
+        pipe = StubPipeline()
+        h = Harness([pipe], max_queue=n, max_sessions=4, max_prompt_len=10_000)
+        seen = []
+        orig_acquire = h.state.sessions.acquire
+
+        def spy(session, max_pending=None):
+            entry, ticket = orig_acquire(session, max_pending)
+            if entry is not None:
+                seen.append(entry)
+            return entry, ticket
+
+        h.state.sessions.acquire = spy
+        try:
+            barrier = threading.Barrier(n)
+
+            def call(i):
+                barrier.wait(timeout=10)
+                return h.post('/generate',
+                              {'session': 'shared', 'prompt': f'p{i}'})
+
+            with ThreadPoolExecutor(max_workers=n) as ex:
+                futures = [ex.submit(call, i) for i in range(n)]
+                results = [f.result(timeout=20) for f in futures]
+
+            self.assertEqual([code for code, _ in results], [200] * n)
+            self.assertEqual(len(seen), n)
+            self.assertEqual(len({id(entry) for entry in seen}), 1,
+                             'concurrent first requests must share one entry/gate')
+            health = h.get('/health')[1]
+            self.assertEqual(health['sessions'], 1)
+            self.assertEqual(health['sessions_active'], 0)
+            self.assertEqual(health['session_evictions'], 0)
+            self.assertEqual(len(h.state.sessions.history('shared')), 2 * n)
+            # One gate serializes the operations: every prompt extends the
+            # previous one (two gates would let snapshots fork).
+            calls = pipe.snapshot_calls()
+            self.assertEqual(len(calls), n)
+            for earlier, later in zip(calls, calls[1:]):
+                self.assertTrue(later.startswith(earlier) and len(later) > len(earlier),
+                                'same-session generations overlapped')
+        finally:
+            h.close()
+
+    def test_concurrent_admission_at_limit_never_bypasses_capacity(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def block(prompt, index):  # noqa: ARG001
+            if index == 1:
+                started.set()
+                release.wait(timeout=10)
+
+        n = 12
+        pipe = StubPipeline(block=block)
+        h = Harness([pipe], max_queue=n, max_sessions=4)
+        try:
+            barrier = threading.Barrier(n)
+            results: list[tuple[int, dict]] = []
+            results_lock = threading.Lock()
+
+            def call(i):
+                barrier.wait(timeout=10)
+                outcome = h.post('/generate',
+                                 {'session': f'c{i}', 'prompt': f'p{i}'})
+                with results_lock:
+                    results.append(outcome)
+                return outcome
+
+            with ThreadPoolExecutor(max_workers=n) as ex:
+                futures = [ex.submit(call, i) for i in range(n)]
+                self.assertTrue(started.wait(5), 'first generation did not start')
+                # The four admitted sessions are pinned (one in flight, three
+                # holding tickets); the other eight are rejected deterministically.
+                wait_until(lambda: len(results) == n - 4,
+                           timeout=10,
+                           message='rejections at session capacity')
+                codes = sorted(code for code, _ in results)
+                self.assertEqual(codes, [429] * (n - 4))
+
+                health = h.get('/health')[1]
+                self.assertEqual(health['sessions'], 4)
+                self.assertEqual(health['sessions_active'], 4)
+                self.assertEqual(health['session_evictions'], 0)
+
+                release.set()
+                for f in futures:
+                    code, body = f.result(timeout=20)
+                    self.assertIn(code, (200, 429), body)
+
+            wins = [body for code, body in results if code == 200]
+            self.assertEqual(len(wins), 4)
+            health = h.get('/health')[1]
+            self.assertEqual(health['sessions'], 4)
+            self.assertLessEqual(health['sessions'], health['session_capacity'])
+            self.assertEqual(health['sessions_active'], 0)
+            self.assertEqual(health['session_evictions'], 0)
+            for body in wins:
+                self.assertEqual(len(h.state.sessions.history(body['session'])), 2)
+
+            # With all four slots now idle, a 13th session evicts exactly one.
+            code, body = h.post('/generate', {'session': 'extra', 'prompt': 'x'})
+            self.assertEqual(code, 200, body)
+            health = h.get('/health')[1]
+            self.assertEqual(health['sessions'], 4)
+            self.assertEqual(health['session_evictions'], 1)
+        finally:
+            release.set()
+            h.close()
+
+    def test_max_sessions_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            server.SessionStore(max_sessions=0)
+        self.assertGreaterEqual(server.DEFAULT_MAX_SESSIONS, 1)
 
 
 if __name__ == '__main__':
