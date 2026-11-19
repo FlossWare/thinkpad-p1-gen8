@@ -41,6 +41,7 @@ def main():
 
     results = {'ts': time.strftime('%Y-%m-%dT%H:%M:%S'),
                'device': 'GPU (Intel(R) Arc(TM) Graphics iGPU)',
+               'model_dir': model_dir,
                'load_s': round(load_s, 2), 'cases': []}
     pipe.generate('Hello', max_new_tokens=2, do_sample=False)  # warm-up
 
@@ -77,8 +78,9 @@ def main():
                   f"wall={case['median_wall_s']}s gen={runs[0]['generated']}",
                   flush=True)
 
+    model_name = os.path.basename(model_dir.rstrip('/'))
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        'results', 'gpu-m3-phase1.json')
+                        'results', f'gpu-{model_name}.json')
     with open(out, 'w') as f:
         json.dump(results, f, indent=1)
     print(f'[done] wrote {out}', flush=True)

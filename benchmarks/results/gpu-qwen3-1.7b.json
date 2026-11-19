@@ -1,0 +1,242 @@
+{
+ "ts": "2026-11-19T14:08:23",
+ "device": "GPU (Intel(R) Arc(TM) Graphics iGPU)",
+ "load_s": 3.26,
+ "cases": [
+  {
+   "case": "short@32",
+   "prompt_tokens": 5,
+   "median_ttft_s": 0.0639,
+   "median_decode_tok_s": 57.8,
+   "median_wall_s": 0.6,
+   "runs": [
+    {
+     "wall_s": 0.643,
+     "ttft_s": 0.1024,
+     "decode_tok_s": 57.3,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.592,
+     "ttft_s": 0.0638,
+     "decode_tok_s": 58.7,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.6,
+     "ttft_s": 0.0636,
+     "decode_tok_s": 57.8,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.606,
+     "ttft_s": 0.0647,
+     "decode_tok_s": 57.3,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.588,
+     "ttft_s": 0.0639,
+     "decode_tok_s": 59.2,
+     "generated": 32
+    }
+   ]
+  },
+  {
+   "case": "short@128",
+   "prompt_tokens": 5,
+   "median_ttft_s": 0.0614,
+   "median_decode_tok_s": 56.4,
+   "median_wall_s": 2.312,
+   "runs": [
+    {
+     "wall_s": 2.334,
+     "ttft_s": 0.0617,
+     "decode_tok_s": 55.9,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.341,
+     "ttft_s": 0.0638,
+     "decode_tok_s": 55.8,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.288,
+     "ttft_s": 0.0606,
+     "decode_tok_s": 57.0,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.298,
+     "ttft_s": 0.0608,
+     "decode_tok_s": 56.8,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.312,
+     "ttft_s": 0.0614,
+     "decode_tok_s": 56.4,
+     "generated": 128
+    }
+   ]
+  },
+  {
+   "case": "medium@32",
+   "prompt_tokens": 23,
+   "median_ttft_s": 0.063,
+   "median_decode_tok_s": 58.5,
+   "median_wall_s": 0.594,
+   "runs": [
+    {
+     "wall_s": 0.66,
+     "ttft_s": 0.1372,
+     "decode_tok_s": 59.4,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.594,
+     "ttft_s": 0.0629,
+     "decode_tok_s": 58.4,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.591,
+     "ttft_s": 0.063,
+     "decode_tok_s": 58.7,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.61,
+     "ttft_s": 0.0668,
+     "decode_tok_s": 57.1,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.593,
+     "ttft_s": 0.0628,
+     "decode_tok_s": 58.5,
+     "generated": 32
+    }
+   ]
+  },
+  {
+   "case": "medium@128",
+   "prompt_tokens": 23,
+   "median_ttft_s": 0.0631,
+   "median_decode_tok_s": 54.9,
+   "median_wall_s": 2.38,
+   "runs": [
+    {
+     "wall_s": 2.383,
+     "ttft_s": 0.063,
+     "decode_tok_s": 54.7,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.39,
+     "ttft_s": 0.0631,
+     "decode_tok_s": 54.6,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.351,
+     "ttft_s": 0.0668,
+     "decode_tok_s": 55.6,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.364,
+     "ttft_s": 0.063,
+     "decode_tok_s": 55.2,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.38,
+     "ttft_s": 0.0653,
+     "decode_tok_s": 54.9,
+     "generated": 128
+    }
+   ]
+  },
+  {
+   "case": "long-289t@32",
+   "prompt_tokens": 289,
+   "median_ttft_s": 0.0586,
+   "median_decode_tok_s": 57.2,
+   "median_wall_s": 0.6,
+   "runs": [
+    {
+     "wall_s": 0.773,
+     "ttft_s": 0.2219,
+     "decode_tok_s": 56.3,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.6,
+     "ttft_s": 0.0586,
+     "decode_tok_s": 57.2,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.598,
+     "ttft_s": 0.0562,
+     "decode_tok_s": 57.2,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.6,
+     "ttft_s": 0.0593,
+     "decode_tok_s": 57.3,
+     "generated": 32
+    },
+    {
+     "wall_s": 0.6,
+     "ttft_s": 0.0558,
+     "decode_tok_s": 57.0,
+     "generated": 32
+    }
+   ]
+  },
+  {
+   "case": "long-289t@128",
+   "prompt_tokens": 289,
+   "median_ttft_s": 0.0588,
+   "median_decode_tok_s": 54.0,
+   "median_wall_s": 2.412,
+   "runs": [
+    {
+     "wall_s": 2.413,
+     "ttft_s": 0.0618,
+     "decode_tok_s": 54.0,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.391,
+     "ttft_s": 0.0588,
+     "decode_tok_s": 54.4,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.408,
+     "ttft_s": 0.0588,
+     "decode_tok_s": 54.1,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.417,
+     "ttft_s": 0.0583,
+     "decode_tok_s": 53.8,
+     "generated": 128
+    },
+    {
+     "wall_s": 2.412,
+     "ttft_s": 0.0568,
+     "decode_tok_s": 53.9,
+     "generated": 128
+    }
+   ]
+  }
+ ],
+ "model": "Qwen3-1.7B-int4-ov (official OpenVINO org IR @ 6f32d81e)"
+}

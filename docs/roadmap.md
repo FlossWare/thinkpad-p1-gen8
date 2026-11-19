@@ -334,7 +334,7 @@ and TTFT grow with the bucket) or client-side history truncation.
 
 ### M2 — Larger models on the NPU
 
-**Status:** ACTIVE, not started. **Effort:** large (conversion + compile risk).
+**Status:** COMPLETE (2026-11-19; results below). **Effort:** large (conversion + compile risk).
 
 **Question.** What is the largest dense Qwen3-family model this 3720 NPU can compile and
 run usefully, and at what context length and generation speed? The concrete first
@@ -426,6 +426,48 @@ negative result closes the milestone and informs whether the GPU (M3) becomes th
 primary path for larger models.
 
 ---
+
+**Results (measured 2026-11-19 — M2 COMPLETE).** Two 1.7B INT4 artifacts were
+tested (both recorded, reproducible):
+
+- **Official** `OpenVINO/Qwen3-1.7B-int4-ov` @ `6f32d81e` (u4:f16 weights):
+  **fails to compile on this NPU in every tested cell** (mpl 256/1024 ×
+  FAST_COMPILE/BEST_PERF; `Unsupported DynamicDequantizeOp configuration:
+  inElemType=!quant.uniform<u4:f16...>, arch=NPU37XX` — the openvino#39184
+  failure class). Negative result, recorded.
+- **Local conversion** (Qwen3-1.7B → INT4 via optimum 2.3.0 + nncf 3.4.0 +
+  torch 2.15.0, `stateful=True`, `weight_format=int4`, in the isolated
+  venv `~/AI/venvs/ov-convert`; tokenizer IRs copied from the official
+  export): **compiles in all four cells** — 9.3/43.8 s (mpl 256,
+  FAST_COMPILE/BEST_PERF), 13.2/49.8 s (mpl 1024), caches 322–350 MB.
+
+Measured performance (mpl=256, BEST_PERF, token-ID accounting; raw rows in
+`benchmarks/results/npu-large-models.jsonl`):
+
+| Model | Device | TTFT | Decode | Verdict |
+|---|---|---|---|---|
+| Qwen3-0.6B INT4 | NPU | 297 ms | 36.5 tok/s | usable (Project 1 baseline) |
+| Qwen3-1.7B INT4 (local) | NPU | **18.6 s** | **0.17 tok/s** | **unusable** — 201 s per 32-token generation, 3.2 GB RSS |
+| Qwen3-1.7B INT4 | **GPU** | **59–64 ms** | **54–58 tok/s** | **the practical path** |
+
+Correctness (CPU reference, `validation/validate_gpu.py`): the GPU's default
+f16 path diverges from CPU token-wise on some prompts (near-tie argmax flips;
+outputs remain textually equivalent — spot-checked) on BOTH models, i.e. it
+is GPU-path numerics, not the 1.7B IR. Forcing
+`INFERENCE_PRECISION_HINT=f32` + `KV_CACHE_PRECISION=f32` on the GPU restores
+**100% token agreement** across the full battery (measured on 0.6B; the same
+knob applies to 1.7B). Note: f32 with default KV precision hits a GenAI GPU
+Paged-Attention block-size error on this build — both hints are required.
+
+**M2 conclusion:** the NPU on this machine is a 0.6B-class accelerator — 1.7B
+compiles (with the right quantization recipe) but runs ~330× slower than the
+iGPU. **Qwen3-1.7B on the Arc iGPU is the first model on this laptop that is
+both worth talking to and measured usable** (~56 tok/s, ~60 ms TTFT).
+The 4B escalation is therefore a GPU question, not an NPU question (moved to
+M3 phase 2). An OpenVINO master build (661 commits newer, including NPUW
+dequant-chain folding) is being tested to see whether the official u4:f16 IR
+compiles on a newer stack — recorded when complete; it cannot change the
+0.17 tok/s verdict for the local IR.
 
 ### M3 — Intel Arc GPU characterization
 
