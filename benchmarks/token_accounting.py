@@ -9,8 +9,10 @@ Core rule (issue #1): every token COUNT comes from the generated token IDs in
 the GenAI result object (``EncodedResults.tokens`` when generate() is called
 with TokenizedInputs). Streamer callback timestamps are used only for TIMING
 boundaries (TTFT, start of decode). Streamer callbacks deliver text chunks,
-not tokens: this build merges/skips chunks (measured: 32 requested tokens ->
-30 callbacks; 128 -> 101), so a callback count is NOT a token count.
+not tokens: this build merges/skips chunks (measured: 31 callbacks for 32
+generated tokens and 122 for 123 in the re-* rows; 30 for 32 requested and
+101 for 128 requested -- actually 123 generated, capacity-truncated, issue
+#13 -- in the superseded rows), so a callback count is NOT a token count.
 
 Measurement boundaries:
   - TTFT: prompt submitted -> first streamer callback.

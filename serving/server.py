@@ -74,6 +74,21 @@ Queueing and validation (issue #7)
   ``prompt`` a non-empty string; ``max_new_tokens`` an int (not a bool) in
   [1, 256].  Violations return HTTP 400 and mutate nothing.
 
+KV-cache capacity (issue #13)
+-----------------------------
+* The NPUW KV window holds ``MAX_PROMPT_LEN + MIN_RESPONSE_LEN`` tokens
+  (prompt + generated combined; 64 + 64 = 128 by default).  GenAI stops a
+  generation gracefully when it reaches that window, returning a shorter,
+  prefix-exact response with no error (docs/npu-early-stop-investigation.md,
+  validation/results/boundary-probes.json).
+* So that this truncation is never silent, a request whose counted prompt
+  tokens (history included) plus ``max_new_tokens`` exceed that capacity is
+  rejected with HTTP 400 ``exceeds_kv_capacity: ...`` before queueing.
+* The counted prompt is the raw text; ``generate()`` additionally applies the
+  model's chat template, which adds tokens.  The check therefore rejects only
+  requests that would certainly be truncated; an accepted request close to
+  the boundary may still receive fewer than ``max_new_tokens`` tokens.
+
 Shutdown policy (issue #3)
 --------------------------
 ``POST /shutdown``, SIGTERM and SIGINT all run the same idempotent sequence:
@@ -100,7 +115,8 @@ Endpoints:
   GET  /health          {"ok": true, "requests_done": [...], "queue_depth": [...],
                          "queue_capacity": [...], "queue_depth_total": N,
                          "sessions": N, "sessions_active": N,
-                         "session_capacity": N, "session_evictions": N, ...}
+                         "session_capacity": N, "session_evictions": N,
+                         "kv_capacity": N, ...}
   POST /shutdown        orderly shutdown
 
 Usage:
@@ -132,6 +148,9 @@ HISTORY_LIMIT_TOKENS = 1024  # sessions refuse to grow beyond this
 MAX_SESSION_ID_LEN = 128
 MAX_NEW_TOKENS_MIN = 1
 MAX_NEW_TOKENS_MAX = 256
+# Passed to the pipeline as MIN_RESPONSE_LEN; with MAX_PROMPT_LEN it fixes the
+# NPUW KV window (prompt + generated tokens) -- see "KV-cache capacity".
+MIN_RESPONSE_LEN = 64
 MAX_BODY_BYTES = 1 << 20
 GENERATE_TIMEOUT_S = 300.0
 # Max operations (holding + waiting) per session gate.  Requests waiting on a
@@ -194,6 +213,9 @@ class Worker:
             raise ValueError('queue_max must be >= 1')
         self.id = worker_id
         self.max_prompt_len = max_prompt_len
+        # GenAI reads the configured (unaligned) values back from the compiled
+        # model, so this is the exact prompt+generated stop boundary (#13).
+        self.kv_capacity = max_prompt_len + MIN_RESPONSE_LEN
         self.queue_max = queue_max
         self.q: 'queue.Queue[dict | object]' = queue.Queue(maxsize=queue_max)
         self.requests_done = 0
@@ -204,7 +226,7 @@ class Worker:
         self._in_flight: dict | None = None
 
         t0 = time.perf_counter()
-        props = dict(MAX_PROMPT_LEN=max_prompt_len, MIN_RESPONSE_LEN=64,
+        props = dict(MAX_PROMPT_LEN=max_prompt_len, MIN_RESPONSE_LEN=MIN_RESPONSE_LEN,
                      GENERATE_HINT='BEST_PERF')
         cache = os.environ.get('NPUW_CACHE_DIR')
         if cache:
@@ -223,8 +245,12 @@ class Worker:
         self.thread.start()
 
     def _count_with_tokenizer(self, text: str) -> int:
-        import numpy as np
-        return int(np.asarray(self.tokenizer.encode(text).input_ids.data).size)
+        # ov.Tensor.data is a numpy ndarray (.size = element count); plain
+        # sequences (test stubs) fall back to len().  No numpy import, so the
+        # stub-based tests and CI need only pytest (issue #14).
+        data = self.tokenizer.encode(text).input_ids.data
+        size = getattr(data, 'size', None)
+        return int(size) if size is not None else len(data)
 
     def count_tokens(self, text: str) -> int:
         return self._token_counter(text)
@@ -720,6 +746,7 @@ def make_handler(state: ServerState):
                     'queue_depth_total': state.queue_depth(),
                     'queue_capacity_total': state.queue_capacity(),
                     'busy': [w.busy() for w in state.workers],
+                    'kv_capacity': state.workers[0].kv_capacity,
                     **state.sessions.stats(),
                 })
             else:
@@ -835,6 +862,21 @@ def make_handler(state: ServerState):
                         'error': f'prompt_too_long: {n_tok} tokens > MAX_PROMPT_LEN '
                                  f'{state.workers[0].max_prompt_len}; '
                                  f'reset session or shorten',
+                    })
+                    return
+
+                capacity = state.workers[0].kv_capacity
+                if n_tok + max_new > capacity:
+                    # NPUW would stop at capacity - n_tok tokens without any
+                    # error (issue #13); refuse instead of truncating silently.
+                    self._json(400, {
+                        'error': f'exceeds_kv_capacity: {n_tok} prompt tokens + '
+                                 f'max_new_tokens {max_new} > MAX_PROMPT_LEN + '
+                                 f'MIN_RESPONSE_LEN = {capacity}; the response '
+                                 f'would be truncated to at most '
+                                 f'{capacity - n_tok} tokens. Lower '
+                                 f'max_new_tokens, shorten/reset the session, or '
+                                 f'raise MIN_RESPONSE_LEN',
                     })
                     return
 

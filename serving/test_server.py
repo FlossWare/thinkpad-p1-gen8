@@ -6,12 +6,13 @@ real ``genai.LLMPipeline`` is replaced by :class:`StubPipeline`, injected
 through :class:`server.Worker`'s ``pipeline_factory``/``token_counter`` hooks.
 The HTTP server is started in-process on an ephemeral port.
 
-Covered behaviour (issues #3, #4, #7, #12):
+Covered behaviour (issues #3, #4, #7, #12, #13):
   * same-session requests serialize in arrival order and history is atomic;
   * different sessions execute concurrently (two workers);
   * reset waits for earlier same-session work, then clears history;
   * bounded queue saturation returns 429 without queueing or mutating state;
   * malformed / missing / out-of-range fields return 400 before queueing;
+  * prompt + max_new_tokens beyond the NPUW KV window returns 400;
   * session state is bounded by max_sessions with idle LRU eviction, active
     sessions are pinned, concurrent admission never duplicates gates or
     exceeds the limit, and /health reports capacity/eviction counters;
@@ -456,13 +457,101 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(self.h.state.sessions.history('long'), [])
 
     def test_boundary_values_accepted(self):
-        for max_new in (1, 256):
+        # 256 (the range maximum) is exercised in KvCapacityTest: at the
+        # default MAX_PROMPT_LEN=64 it exceeds the 128-token KV window.
+        for max_new in (1, 64):
             with self.subTest(max_new_tokens=max_new):
                 code, body = self.h.post('/generate', {
                     'session': f'ok-{max_new}', 'prompt': 'x',
                     'max_new_tokens': max_new})
                 self.assertEqual(code, 200, body)
                 self.assertEqual(body['prompt_tokens'], 1)
+
+
+class TokenizerCountTest(unittest.TestCase):
+    """Production token counter needs no numpy (CI installs only pytest)."""
+
+    def test_counts_ndarray_like_and_plain_sequences(self):
+        class _Arr:  # stands in for the ndarray returned by ov.Tensor.data
+            size = 7
+        for data, expected in ((_Arr(), 7), (list(range(5)), 5), ([], 0)):
+            class _Tok:
+                def encode(self, text, data=data):  # noqa: ARG002
+                    return type('E', (), {'input_ids': type(
+                        'I', (), {'data': data})()})()
+            w = server.Worker.__new__(server.Worker)
+            w.tokenizer = _Tok()
+            with self.subTest(expected=expected):
+                self.assertEqual(w._count_with_tokenizer('x'), expected)
+
+    def test_server_source_does_not_import_numpy(self):
+        tree = ast.parse((HERE / 'server.py').read_text())
+        names = {a.name.split('.')[0] for n in ast.walk(tree)
+                 if isinstance(n, (ast.Import, ast.ImportFrom))
+                 for a in (n.names if isinstance(n, ast.Import) else
+                           [type('A', (), {'name': n.module or ''})()])}
+        self.assertNotIn('numpy', names)
+
+
+class KvCapacityTest(unittest.TestCase):
+    """prompt + max_new_tokens beyond MAX_PROMPT_LEN + MIN_RESPONSE_LEN (#13).
+
+    NPUW would silently truncate such a generation, so the server rejects it
+    with 400 before queueing.  Stub token counter: len(text).
+    """
+
+    def _harness(self, max_prompt_len):
+        pipe = StubPipeline()
+        h = Harness([pipe], max_prompt_len=max_prompt_len)
+        self.addCleanup(h.close)
+        return h, pipe
+
+    def test_exact_capacity_accepted_one_over_rejected(self):
+        h, pipe = self._harness(64)
+        self.assertEqual(h.get('/health')[1]['kv_capacity'], 128)
+        # 64 + 64 = 128: fits exactly (cf. probe [192,128] at mpl=256).
+        code, body = h.post('/generate', {'session': 'a', 'prompt': 'x' * 64,
+                                          'max_new_tokens': 64})
+        self.assertEqual(code, 200, body)
+        # 5 + 128 = 133 > 128: the recorded re-mp64-bestperf-128tok case
+        # (NPUW generated 123 of 128).
+        code, body = h.post('/generate', {'session': 'b', 'prompt': 'x' * 5,
+                                          'max_new_tokens': 128})
+        self.assertEqual(code, 400, body)
+        self.assertIn('exceeds_kv_capacity', body['error'])
+        self.assertIn('at most 123 tokens', body['error'])
+        self.assertEqual(h.state.sessions.history('b'), [])
+        self.assertEqual(len(pipe.snapshot_calls()), 1)
+        self.assertEqual(h.get('/health')[1]['queue_depth_total'], 0)
+
+    def test_history_counts_toward_capacity(self):
+        h, pipe = self._harness(64)
+        code, body = h.post('/generate', {'session': 's', 'prompt': 'x' * 30,
+                                          'max_new_tokens': 32})
+        self.assertEqual(code, 200, body)
+        # History is now 'x'*30 + ' reply1' (37 chars); 37 + 'y'*10 = 47
+        # prompt tokens, under MAX_PROMPT_LEN, but 47 + 82 = 129 > 128.
+        code, body = h.post('/generate', {'session': 's', 'prompt': 'y' * 10,
+                                          'max_new_tokens': 82})
+        self.assertEqual(code, 400, body)
+        self.assertIn('exceeds_kv_capacity', body['error'])
+        code, body = h.post('/generate', {'session': 's', 'prompt': 'y' * 10,
+                                          'max_new_tokens': 81})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(len(pipe.snapshot_calls()), 2)
+
+    def test_larger_bucket_admits_range_maximum(self):
+        h, _ = self._harness(256)
+        self.assertEqual(h.get('/health')[1]['kv_capacity'], 320)
+        code, body = h.post('/generate', {'session': 'm', 'prompt': 'x',
+                                          'max_new_tokens': 256})
+        self.assertEqual(code, 200, body)
+        # The recorded near-limit case: 193 + 128 = 321 > 320.
+        code, body = h.post('/generate', {'session': 'n',
+                                          'prompt': 'x' * 193,
+                                          'max_new_tokens': 128})
+        self.assertEqual(code, 400, body)
+        self.assertIn('at most 127 tokens', body['error'])
 
 
 class ShutdownTest(unittest.TestCase):

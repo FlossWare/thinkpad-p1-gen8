@@ -49,7 +49,14 @@ by GenAI's per-sequence capacity check (`lm_encoding.cpp:134` with
 `utils.cpp:933`) and by the plugin's own guards (`llm_infer_request.cpp:1505, 1544`);
 the NPU run requested 321 tokens of window — one more than configured — so it stopped
 gracefully at the limit. Source-verified, not just arithmetic: see
-[npu-early-stop-investigation.md](npu-early-stop-investigation.md).
+[npu-early-stop-investigation.md](npu-early-stop-investigation.md). **Empirically
+confirmed** (NPU machine, 2026-11-19, 11 boundary probes, raw:
+[`validation/results/boundary-probes.json`](../validation/results/boundary-probes.json),
+script `validation/boundary_probe.py`): the 193 × 128 case reproduces (127 tokens),
+192 × 128 completes all 128 (192 + 128 = 320), 200 × 128 stops at 120, and every
+truncating case is prefix-exact. This is expected capacity behavior, not a bug; the
+battery result above is unchanged — it stays a 127-token prefix match, **not** a
+128-token match, and the strict count stays 8 of 10.
 
 ΔΣlogP = NPU sum-of-top-1-logprobs minus CPU, over the full generation. Magnitudes
 grow with length (−0.19 → −0.38 for 32 → 128 tokens) roughly linearly (~3e-3/token),
@@ -94,6 +101,11 @@ it. The repeated-token prompt shows the largest, matching the argmax-flip above.
   One such case (`near-limit-193t@128`) ended one token early on NPU (127 vs 128,
   prompt + generation reaching the 320-token mpl + min-response capacity), so the
   strictly identical count is 8 of 10.
+- **Capacity rule (confirmed, issue #13):** NPUW generates at most
+  `MAX_PROMPT_LEN + MIN_RESPONSE_LEN − prompt_tokens` tokens. A larger
+  `max_new_tokens` is silently truncated (prefix-exact, no error). Size
+  `MIN_RESPONSE_LEN` so that `prompt_tokens + max_new_tokens ≤ MAX_PROMPT_LEN +
+  MIN_RESPONSE_LEN`.
 - Divergence risk concentrates in near-tie top-2 logits, which occur on degenerate
   (repeated-token) prompts; the flip produces a locally different but semantically
   equivalent continuation.

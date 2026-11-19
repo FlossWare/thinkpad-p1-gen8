@@ -5,10 +5,11 @@ Date: 2026-11-19. Method: read-only source trace of the OpenVINO / GenAI trees a
 on the `releases/2026/5` branches matching the installed `openvino-2026.5` wheel
 (plugin-load evidence in `benchmarks/results/results.jsonl` points at
 `~/AI/install/openvino-2026.5-python` and the compiler loader built from
-`~/AI/src/openvino/bin`). **No runtime result in this document is new** — every number
-quoted below was already recorded in this repo (`docs/correctness.md`,
-`benchmarks/results/results.jsonl`); the NPU-machine probes that would *confirm* the
-conclusion are listed at the end.
+`~/AI/src/openvino/bin`). The source trace and the numbers in it were derived from data
+already recorded in this repo (`docs/correctness.md`, `benchmarks/results/results.jsonl`).
+The conclusion was then **confirmed empirically on the NPU machine** by 11 boundary
+probes (2026-11-19, raw: [`validation/results/boundary-probes.json`](../validation/results/boundary-probes.json));
+see "Empirical confirmation" below.
 
 ## Reproduction configuration (as recorded)
 
@@ -162,17 +163,59 @@ in-flight input slot and cancel out: the boundary lands exactly on
   stop is a `SequenceStatus::OUT_OF_MEMORY` transition, not EOS and not a callback
   miscount.
 
-**HYPOTHESIS (pending the NPU-machine probes below):** that the observed 127/123
-stops were produced by exactly this code path (as opposed to some other coincidental
-stop at the same length). The source boundary and both recorded data points agree to
-the token, but this machine has no NPU, so the path was not observed executing.
+**EMPIRICALLY CONFIRMED (NPU machine, 2026-11-19):** the boundary probes below
+reproduce the original case (193 × 128 → 127) and land on
+`prompt + generated = mpl + mrl = 320` in every case that reaches it, while the
+last-fitting case (192 × 128) completes all 128 tokens. What the probes do *not*
+observe directly is the internal `SequenceStatus::OUT_OF_MEMORY` transition (no
+status is exposed through the Python API); that attribution rests on the source trace,
+which predicts every probe length exactly.
 
 **UNEXPLAINED:** nothing remains for this specific observation. One adjacent
 open question, out of scope for this issue: whether a *natural* EOS could ever be
 confused with the capacity stop in the recorded battery (it cannot for these two
 cases — both outputs end mid-sentence).
 
-## Empirical boundary probes for the NPU-machine run
+## Empirical confirmation (NPU machine, 2026-11-19)
+
+Script: [`validation/boundary_probe.py`](../validation/boundary_probe.py) (run with the
+environment from `scripts/env.sh` and `NPU_MODEL_DIR` set:
+`python3 validation/boundary_probe.py`). Config identical to the battery: mpl=256,
+mrl=64, `GENERATE_HINT=BEST_PERF`, greedy, `CACHE_DIR` persistent. Prompts are exact
+token-length slices of a filler text passed as `TokenizedInputs` (no chat template),
+so `prompt_tokens` is the exact model input length; counts are `EncodedResults.tokens`
+lengths. Raw: [`validation/results/boundary-probes.json`](../validation/results/boundary-probes.json).
+
+| prompt | requested | CPU | NPU | prompt + NPU | predicted NPU = min(req, 320 − prompt) | common-prefix match |
+|---:|---:|---:|---:|---:|---:|---|
+| 5 | 128 | 128 | 128 | 133 | 128 | no (see note) |
+| 5 | 190 | 190 | 190 | 195 | 190 | no (see note) |
+| 5 | 200 | 200 | 200 | 205 | 200 | no (see note) |
+| 129 | 128 | 128 | 128 | 257 | 128 | yes |
+| 191 | 128 | 128 | 128 | 319 | 128 | yes |
+| **192** | 128 | 128 | **128** | **320** | 128 (fits exactly) | yes |
+| **193** | 128 | 128 | **127** | **320** | 127 (original case reproduced) | yes |
+| **200** | 128 | 128 | **120** | **320** | 120 | yes |
+| 193 | 64 | 64 | 64 | 257 | 64 | yes |
+| 250 | 64 | 64 | 64 | 314 | 64 | yes |
+| **256** | 64 | 64 | **64** | **320** | 64 (fits exactly) | yes |
+
+All 11 NPU lengths equal the prediction; CPU always produced the requested count. The
+early stop is prefix-exact in all three truncating cases. **Note on the 5-token rows:**
+`prefix_match` is false there — the CPU and NPU token sequences diverge somewhere in
+these long generations from a repetitive filler prompt. This is a content divergence
+(the FP16 near-tie class documented in `docs/correctness.md`), not a length effect:
+lengths match exactly and 5 + 200 = 205 is far from the 320 window. It was not
+investigated further here.
+
+Together with the recorded mpl=64 row (`re-mp64-bestperf-128tok`: 5 + 123 = 128 =
+64 + 64), the boundary is confirmed at two different `MAX_PROMPT_LEN` values. Of the
+planned probes below, #1, #2 and the #3 subset 129/191/200 were run, #5 is covered by
+the recorded mpl=64 row; #3 (255), #4 (316 requested), #6 (mrl=128), #7 (explicit EOS
+check) and #8 were **not** run. #6 is the remaining direct test that the window moves
+with `MIN_RESPONSE_LEN` (the source and the mpl=64 data point say it does).
+
+## Planned boundary probes (pre-run design)
 
 All greedy, same model/config as the battery. Prediction in every case:
 **generated = min(requested, mpl + mrl − prompt_len)**, output an exact prefix of the
@@ -193,6 +236,13 @@ A single probe contradicting its prediction (e.g. #1 stopping at 127, or #5 comp
 128) would falsify the confirmed mechanism and reopen the investigation.
 
 ## Documentation corrections made alongside this note
+
+- Capacity rule now stated wherever a configuration is recommended:
+  `prompt_tokens + max_new_tokens ≤ MAX_PROMPT_LEN + MIN_RESPONSE_LEN`, otherwise the
+  generation is silently (prefix-exactly) truncated — `docs/npuw-tuning.md`
+  (finding 4, results row 4, recommended configuration), `README.md`,
+  `docs/serving.md`. `serving/server.py` now rejects requests beyond the window with
+  HTTP 400 `exceeds_kv_capacity` instead of truncating silently.
 
 - `docs/correctness.md:46-48` — the capacity explanation was labeled "a hypothesis
   from the arithmetic, not verified against the plugin source here"; it is now

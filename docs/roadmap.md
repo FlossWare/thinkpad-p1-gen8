@@ -160,11 +160,14 @@ numerator and must not be mixed with `re-*` in one comparison) and
     metric that includes queueing; TTFT and decode are measured inside
     `generate()` and do not include it.
 - **Why callback/chunk counts are not token counts on this build:** the text
-  streamer delivers text chunks, not tokens. On this build it merges and skips
-  chunks: measured 32 requested tokens → 30 callbacks and 128 → 101 callbacks
-  (see `benchmarks/results/results.jsonl`). Using `n_chunks` or
-  `len(token_times)` as the decode numerator materially over- or under-counts
-  tokens (up to ~25% divergence at 128 tokens). Callback counts are therefore
+  streamer delivers text chunks, not tokens, and on this build the callback count
+  differs from the generated-token count: the `re-*` rows record 31 callbacks for
+  32 generated tokens and 122 for 123; the superseded rows recorded 30 callbacks
+  for 32 requested and 101 for 128 requested (that config actually generates only
+  123 tokens — it is capacity-truncated, issue #13 — so "128" there was never a
+  token count either). See `benchmarks/results/results.jsonl`. Using `n_chunks`
+  or `len(token_times)` as the decode numerator therefore miscounts tokens, by an
+  amount that varies with streamer version and content. Callback counts are therefore
   recorded only as `streamer_chunks` reference data, never as a throughput
   numerator. See `benchmarks/token_accounting.py` for the accounting rules and
   the known limitation that the first callback is assumed to mark the first
@@ -179,6 +182,12 @@ numerator and must not be mixed with `re-*` in one comparison) and
   tokenizer, matching Project 1's methodology.
 - **Reporting:** measured facts, interpretation, and hypotheses are separate sections in
   every results document, and the single-machine limitation is restated there.
+- **Requested vs generated tokens:** `max_new_tokens` is not a token count either.
+  NPUW stops silently once `prompt_tokens + generated_tokens` reaches
+  `MAX_PROMPT_LEN + MIN_RESPONSE_LEN` (issue #13,
+  [npu-early-stop-investigation.md](npu-early-stop-investigation.md)), and EOS can
+  stop earlier; every milestone records `generated_tokens` and sizes its NPUW
+  config so the requested length fits the window.
 - **Methodology-change rule:** if a future runtime exposes a different reliable
   timing interface (e.g., per-token timestamps, a new result field), the change
   must be documented in this file with a date and rationale, old and new results
