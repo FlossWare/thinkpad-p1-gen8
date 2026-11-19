@@ -429,7 +429,7 @@ primary path for larger models.
 
 ### M3 — Intel Arc GPU characterization
 
-**Status:** ACTIVE, not started. **Effort:** medium.
+**Status:** IN PROGRESS — phase 1 complete (2026-11-19; results below). **Effort:** medium.
 
 **Question.** For the same model and IR, how does the integrated Intel Arc GPU compare
 with the NPU and CPU on load/compile, first inference, TTFT, decode, and memory at
@@ -512,6 +512,41 @@ failure. Phase 2 (optional, after M2): run the larger IR on the GPU if it exists
 GPU path is functional.
 
 ---
+
+
+**Phase-1 results (measured 2026-11-19).** Pre-flight: GPU PCI `8086:7d51`
+(recorded in hardware/thinkpad-p1-gen8.md), OpenVINO devices `['CPU', 'GPU',
+'NPU']`, GPU full name "Intel(R) Arc(TM) Graphics (iGPU)". Harness:
+`benchmarks/gpu_characterize.py` (token-ID accounting, same rules as the NPU
+benchmarks); raw data: `benchmarks/results/gpu-m3-phase1.json`. Qwen3-0.6B INT4,
+`genai.LLMPipeline(device='GPU')` (the plain stateful path — NPUW properties
+like MAX_PROMPT_LEN do not apply to GPU and are rejected by the plugin):
+
+| Case (prompt @ max_new) | TTFT | Decode | Full generation? |
+|---|---|---|---|
+| short (5 t) @ 32 | 41 ms | 113.0 tok/s | yes (32/32) |
+| short @ 128 | 40 ms | 102.7 tok/s | yes (128/128) |
+| medium (23 t) @ 32 | 42 ms | 114.3 tok/s | yes |
+| medium @ 128 | 39 ms | 105.5 tok/s | yes |
+| long (289 t) @ 32 | 34 ms | 102.9 tok/s | yes |
+| long @ 128 | 33 ms | 98.9 tok/s | yes (128/128) |
+
+Phase-1 findings vs the NPU (same model, Project 1 / M1 numbers):
+
+1. **The iGPU dominates the NPU on every axis for this model**: TTFT 33–42 ms
+   vs 189–1,204 ms (5–35× faster; TTFT is also prompt-length-independent on
+   GPU — dynamic shapes, no bucket padding); decode 99–114 tok/s vs 43–48
+   (2.1–2.6×); load 1.9 s vs ~1.1 s warm (comparable) with no 20 s cold
+   compiles and no NPUW workarounds required.
+2. **No KV-capacity window on the GPU path**: full 128-token generations from
+   a 289-token prompt (the NPUW path truncates at mpl+mrl).
+3. Output is coherent greedy generation (spot-checked; a correctness battery
+   against CPU is the remaining phase-2 item, along with 512/1024-context
+   scaling, memory, and multi-turn behavior on GPU).
+4. Device-selection implication (measured, this model only): the iGPU, not the
+   NPU, is the practical host for local LLM inference on this machine; the
+   NPU's case rests on efficiency and availability under GPU load — untested
+   (backlog). M2's escalation decisions should account for this.
 
 ### M4 — Driver and runtime re-testing matrix
 

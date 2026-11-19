@@ -12,6 +12,7 @@ repository were taken on this exact machine.
 | Machine | Lenovo ThinkPad P1 Gen 8 |
 | CPU | Intel Core Ultra 7 265H (Arrow Lake-H, 16 cores) |
 | NPU | Intel AI Boost, integrated; PCI `8086:7d1d` at `00:0b.0` (rev 05); device node `/dev/accel0`; NPU platform **3720** |
+| iGPU | Intel Arc Graphics (reports as "Intel(R) Arc(TM) Graphics (iGPU)"); PCI `8086:7d51` at `00:02.0` (rev 03, Arrow Lake-P Arc Pro 130T/140T class); media stack libva-intel-media-driver 26.3.5, Level Zero 1.33.1 |
 | OS | Fedora 44, kernel `7.3.4-200.fc44.x86_64` |
 | NPU driver | intel-npu-driver 1.32.0 (Fedora package) |
 | Level Zero | oneapi-level-zero 1.33.1 / intel-level-zero 26.35.39758.21 (Fedora packages; driver reports 26.35.39758.17) |
