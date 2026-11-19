@@ -24,10 +24,18 @@ sequentially.
   a successful generation.
 - **Predictable errors**: over-length prompts (session history included) are rejected
   pre-queue with HTTP 400 and a specific message (`prompt_too_long: N tokens >
-  MAX_PROMPT_LEN 64`); pipeline exceptions surface as HTTP 500; 300 s in-queue
-  timeout → HTTP 504; malformed JSON → 400.
-- **Graceful shutdown**: `POST /shutdown`, SIGTERM, SIGINT all drain the queue, finish
-  the in-flight request, and exit 0 (verified).
+  MAX_PROMPT_LEN 64`); malformed/missing/invalid fields are rejected with 400 before
+  queueing; pipeline exceptions surface as HTTP 500; 300 s in-queue timeout → HTTP
+  504; a full request queue (bounded, `--max-queue`/`QUEUE_MAX`, default 32) →
+  HTTP 429 `overloaded` and the request is not queued.
+- **Ordering**: requests to the same session serialize in arrival order (history
+  snapshot + generation + record are atomic); different sessions may run
+  concurrently. `POST /reset` is ordered with the session's generations and waits
+  for earlier work before clearing history.
+- **Graceful shutdown**: `POST /shutdown`, SIGTERM, SIGINT stop accepting, cancel
+  queued-not-started requests with 503, finish in-flight work, and join workers
+  within `--drain-timeout`/`DRAIN_TIMEOUT_S` (default 30 s); a drain timeout is
+  logged and reported, and the process exits normally (no `os._exit`).
 - Endpoints: `POST /generate`, `POST /reset`, `GET /health`, `POST /shutdown`.
 
 ## Measurements (20 requests, 16 new tokens each, short prompts, mpl=64, BEST_PERF)
