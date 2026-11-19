@@ -1,0 +1,32 @@
+{
+  "ts": "2026-11-19T18:20:00",
+  "purpose": "M4-flavored retest: OpenVINO master vs the working 2026.5 snapshot on this machine",
+  "stack_under_test": {
+    "openvino": "2027.0.0-23963-c9bfbcfe298 (master, 661 commits ahead of the working 88f8c6bf7c)",
+    "genai": "2027.0.0.0-3690-116cc1d763c (master)",
+    "build": "isolated worktrees ~/AI/src/openvino-master and ~/AI/src/openvino.genai-main; wheel installed to ~/AI/install/openvino-master-test; working installation untouched"
+  },
+  "results": {
+    "gpu_sanity": "PASS - greedy generation works on the plain stateful path",
+    "gpu_perf_qwen3-1.7b": {
+      "ttft_ms_single_run": 270,
+      "decode_tok_s_single_run": 31.6,
+      "load_s": 8.9,
+      "comparison_2026.5_snapshot": {"ttft_ms": "59-64", "decode_tok_s": "54-58", "load_s": 3.3},
+      "verdict": "master measured ~2x slower decode and ~4x TTFT on a single-run probe; gap far exceeds run-to-run noise"
+    },
+    "npu": {
+      "verdict": "BROKEN on this machine",
+      "details": [
+        "master no longer builds the NPU compiler in-tree; it downloads a prebuilt VCL compiler for Ubuntu 22.04/24.04/26.04 ONLY - Fedora 44 is explicitly skipped ('Can not use plugin compiler libraries')",
+        "with IE_NPU_COMPILER_TYPE=PLUGIN the build without compiler libs falls back to the broken driver compiler (ZE_RESULT_ERROR_UNKNOWN 0x7ffffffe, vclAllocatedExecutableCreate2)",
+        "after spoofing lsb_release=Ubuntu 24.04 during configure, the prebuilt compiler v8.5.0 (436452c, sha256-verified by cmake) was fetched and installed into the wheel libs; NPU compilation STILL fails with the same vclAllocatedExecutableCreate2 error",
+        "the known-good control (qwen3-0.6b-int4, compiles in seconds on the 2026.5 snapshot) fails on master => master cannot use this NPU at all"
+      ]
+    },
+    "packaging": "the master wheel still omits libopenvino_intel_npu_compiler*.so and libopenvino_intel_npu_vm_runtime.so; the symlink/copy workaround remains necessary",
+    "abi": "GenAI 2026.5 does not load against OV master (SDPAToPagedAttention signature changed) - full-stack upgrades must move together"
+  },
+  "conclusion": "The latest code is NOT better on this machine: worse on GPU (measured), broken on NPU (Fedora unsupported + vcl failure persists with the prebuilt compiler). The 2026.5 snapshot remains the correct stack. Re-test before any upstream upgrade; do not assume newer is better.",
+  "reproduce": "env PYTHONPATH=$HOME/AI/src/openvino.genai-main/build:$HOME/AI/install/openvino-master-test LD_LIBRARY_PATH=$HOME/AI/install/openvino-master-test/openvino/libs:$HOME/AI/src/openvino.genai-main/build/openvino_genai IE_NPU_COMPILER_TYPE=PLUGIN python3 ..."
+}

@@ -590,7 +590,27 @@ Phase-1 findings vs the NPU (same model, Project 1 / M1 numbers):
    NPU's case rests on efficiency and availability under GPU load — untested
    (backlog). M2's escalation decisions should account for this.
 
-### M4 — Driver and runtime re-testing matrix
+### 
+
+**First re-test result (2026-11-19): OpenVINO master vs the working snapshot.**
+Built OV master (`2027.0.0-23963`, 661 commits ahead) + GenAI master
+(`2027.0.0.0-3690`) in isolated worktrees; the working installation was
+untouched. Verdict — **newer is worse on this machine; do not upgrade**:
+
+- **GPU**: works, but measured ~2× slower decode and ~4× TTFT for Qwen3-1.7B
+  (single-run probe: 31.6 tok/s / 270 ms vs 54–58 tok/s / ~60 ms on the
+  snapshot).
+- **NPU**: broken. Master drops the in-tree compiler and downloads a prebuilt
+  VCL compiler for Ubuntu only — Fedora 44 is explicitly skipped; even with
+  the sha256-verified prebuilt v8.5.0 manually installed, NPU compilation
+  fails identically (`vclAllocatedExecutableCreate2`), including on the
+  known-good 0.6B control model.
+- The wheel still omits the NPU compiler libs (workaround remains), and the
+  GenAI 2026.5 ↔ OV master ABI breaks (`SDPAToPagedAttention`).
+
+Raw record: [`benchmarks/results/ov-master-retest.json`](../benchmarks/results/ov-master-retest.json).
+This is the first row of the M4 compatibility matrix: the 2026.5 snapshot is
+pinned until a future release re-tests green on both accelerators.M4 — Driver and runtime re-testing matrix
 
 **Status:** ACTIVE (standing), not started. **Effort:** small, recurring.
 
