@@ -703,6 +703,74 @@ class WorkerRobustnessTest(unittest.TestCase):
             h.close()
 
 
+class TokenizerFailureTest(unittest.TestCase):
+    def test_tokenizer_exception_returns_json_500_and_releases_gate(self):
+        def counter(text):
+            if 'BOOM' in text:
+                raise RuntimeError('tokenizer exploded')
+            return len(text)
+
+        pipe = StubPipeline()
+        h = Harness([pipe], max_queue=2, token_counter=counter)
+        try:
+            code, body = h.post('/generate', {'session': 's', 'prompt': 'BOOM'})
+            self.assertEqual(code, 500, body)
+            self.assertIn('tokenizer_error', body['error'])
+            self.assertEqual(h.state.sessions.history('s'), [])
+            self.assertEqual(pipe.snapshot_calls(), [])
+            # The session gate was released: the same session still works.
+            code, body = h.post('/generate', {'session': 's', 'prompt': 'ok'})
+            self.assertEqual(code, 200, body)
+        finally:
+            h.close()
+
+    def test_history_limit_is_still_400(self):
+        pipe = StubPipeline()
+        h = Harness([pipe], max_queue=2, max_prompt_len=10_000,
+                    token_counter=lambda text: len(text))
+        try:
+            code, body = h.post('/generate', {
+                'session': 's', 'prompt': 'x' * (server.HISTORY_LIMIT_TOKENS + 1)})
+            self.assertEqual(code, 400, body)
+            self.assertIn('exceeds', body['error'])
+        finally:
+            h.close()
+
+
+class GenerateTimeoutTest(unittest.TestCase):
+    def test_timeout_504_is_bounded_and_abandoned_result_not_recorded(self):
+        release = threading.Event()
+
+        def block(prompt, index):  # noqa: ARG001
+            if index == 1:
+                release.wait(10)
+
+        pipe = StubPipeline(block=block)
+        h = Harness([pipe], max_queue=2)
+        saved = server.GENERATE_TIMEOUT_S
+        server.GENERATE_TIMEOUT_S = 0.2
+        try:
+            t0 = time.monotonic()
+            code, body = h.post('/generate', {'session': 's', 'prompt': 'A'})
+            self.assertEqual(code, 504, body)
+            # Delivered while the generation is still blocked (not unbounded).
+            self.assertFalse(release.is_set())
+            self.assertLess(time.monotonic() - t0, 5.0)
+            server.GENERATE_TIMEOUT_S = saved
+            release.set()
+            wait_until(lambda: h.get('/health')[1]['busy'] == [False],
+                       message='abandoned generation finished')
+            self.assertEqual(h.state.sessions.history('s'), [],
+                             'timed-out generation must not be recorded')
+            code, body = h.post('/generate', {'session': 's', 'prompt': 'B'})
+            self.assertEqual(code, 200, body)
+            self.assertEqual(h.state.sessions.history('s'), ['B', body['text']])
+        finally:
+            server.GENERATE_TIMEOUT_S = saved
+            release.set()
+            h.close()
+
+
 class HealthAndProtocolTest(unittest.TestCase):
     def test_health_fields_and_endpoint_shapes(self):
         pipe = StubPipeline()

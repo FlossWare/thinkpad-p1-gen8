@@ -193,5 +193,15 @@ class BenchClientTests(unittest.TestCase):
         self.assertTrue(all(r['status'] == 'exception' for r in res['requests']))
 
 
+
+class PercentileTest(unittest.TestCase):
+    def test_p95_is_nearest_rank_not_max(self):
+        values = [float(i) for i in range(1, 21)]  # n = 20
+        self.assertEqual(bench_serving.nearest_rank(values, 0.95), 19.0)
+        self.assertEqual(bench_serving.nearest_rank(values, 1.0), 20.0)
+        self.assertEqual(bench_serving.nearest_rank([3.0], 0.95), 3.0)
+        self.assertEqual(bench_serving.nearest_rank(
+            [float(i) for i in range(1, 101)], 0.95), 95.0)
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

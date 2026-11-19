@@ -57,11 +57,11 @@ designed around them.
 | Fact | Source |
 |---|---|
 | NPUW Qwen3-0.6B INT4 decode is **44.6 tok/s** with `GENERATE_HINT=BEST_PERF` at mpl=64; baseline `FAST_COMPILE` is 36.5 tok/s (token-ID accounting, re-measured 2026-11-19). | [docs/npuw-tuning.md](npuw-tuning.md) |
-| TTFT is dominated by the shape bucket: **164–170 ms** at `MAX_PROMPT_LEN=64`, **266 ms** at 256. The plugin aligns the bucket up to multiples of 64; prompts longer than it are rejected, not truncated. | [docs/npuw-tuning.md](npuw-tuning.md) |
+| TTFT is dominated by the shape bucket: **189 ms** at `MAX_PROMPT_LEN=64` (BEST_PERF), **297 ms** at 256 (baseline) — rows `re-mp64-bestperf`, `re-baseline-warm`. The plugin aligns the bucket up to multiples of 64; prompts longer than it are rejected, not truncated. | [docs/npuw-tuning.md](npuw-tuning.md) |
 | `BEST_PERF` costs **19.8 s cold compile** (per model/config/compiler cache key) and **~1.1 s warm load** from a persistent `CACHE_DIR`. | [docs/npuw-tuning.md](npuw-tuning.md) |
-| Chunked prefill is **slower** than static prefill at 0.6B (476 vs 691 tok/s on a 349-token prompt). | [docs/npuw-tuning.md](npuw-tuning.md) |
-| NPUW stores the KV cache in **FP16** (source-verified), independent of INT4 weights; CPU-vs-NPU greedy output was token-identical on 9/10 battery tests, with one near-tie argmax flip. Per-step top-1-logprob drift: mean ≤ 0.04, max 0.15; cosine similarity of the 16-step top-1-logprob vectors ≥ 0.9993 (not a full-logit cosine). | [docs/correctness.md](correctness.md) |
-| One pipeline + FIFO queue serves **~2.0 successful req/s** (16-token requests); concurrency adds latency linearly and no throughput. The single- vs two-pipeline comparison is not yet supported by clean runs. At `mpl=64` a session holds only ~3 short exchanges. | [docs/serving.md](serving.md) |
+| Chunked prefill is **slower** than static prefill at 0.6B (476 vs 691 tok/s on a 289-token prompt; historical rows, not re-measured). | [docs/npuw-tuning.md](npuw-tuning.md) |
+| NPUW stores the KV cache in **FP16** (source-verified), independent of INT4 weights; CPU-vs-NPU greedy output was strictly token-identical on 8/10 battery tests: one near-tie argmax flip, and one 193-token-prompt run where the NPU matched all 127 common tokens but stopped one token short of 128 (prompt + output = 320 = mpl + min-response). Per-step top-1-logprob drift: mean ≤ 0.04, max 0.15; cosine similarity of the 16-step top-1-logprob vectors ≥ 0.9992 (raw minimum 0.99929; not a full-logit cosine). | [docs/correctness.md](correctness.md) |
+| One pipeline + FIFO queue serves **1.8–1.9 successful req/s** (16-token requests, clean `re-w1-*` runs); concurrency adds latency linearly and no throughput. Clean two-pipeline runs: sequential a wash (1.88 req/s), ~16% faster under 4 clients (2.17 vs 1.86 req/s). At `mpl=64` a session holds only ~3 short exchanges. | [docs/serving.md](serving.md) |
 | Platform 3720 defaults to the **driver** NPU compiler on Linux and fails model-independently; `IE_NPU_COMPILER_TYPE=PLUGIN` is mandatory. Upstream openvino#38738 is closed "not planned"; no Intel driver release through v1.38.0 documents a fix. | [docs/driver-compiler.md](driver-compiler.md) |
 | openvino#39184 (open) reports Qwen3.5-4B INT8 failing on NPU37XX due to dynamic hybrid KV-cache shapes — relevant to model/format choice in M2. | [docs/driver-compiler.md](driver-compiler.md) |
 | Platform: Core Ultra 7 265H, NPU PCI `8086:7d1d` (platform 3720), Fedora 44 kernel `7.3.4-200.fc44.x86_64`, intel-npu-driver 1.32.0, Level Zero 26.35.39758.21, OpenVINO 2026.5.0 commit `88f8c6bf7c`, GenAI `releases/2026/5` @ `2de7224b`. The Intel Arc GPU has **not** been identified or tested in this repository yet. | [docs/environment.md](environment.md), [hardware/thinkpad-p1-gen8.md](../hardware/thinkpad-p1-gen8.md) |
@@ -74,7 +74,7 @@ The distinction is maintained throughout, and every results page must keep it:
   scripts and raw JSON.
 - **Interpretation** (supported by those measurements, but still specific to this
   model/build/device): TTFT is governed by bucket size rather than prompt length; the
-  single divergence is an FP16 near-tie flip rather than cache corruption; throughput
+  single token divergence is an FP16 near-tie flip rather than cache corruption; throughput
   serializes because one stateful pipeline owns the NPU.
 - **Hypotheses, untested** — the active milestones exist to test these and must be free
   to refute them (H6 belongs to the backlog embeddings item, not to an active
@@ -291,7 +291,7 @@ whether the NPU is a viable host for a useful model or a 0.6B-class accelerator.
   `GENERATE_HINT` ∈ {FAST_COMPILE, BEST_PERF}, each with a fresh cache. Record
   success/failure, compile time, and on-disk cache size.
 - Generation: the fixed Project 1 prompts (`short` 5-token, `medium` 23-token) plus the
-  349-token long prompt, `max_new_tokens` 32 and 128, greedy. One uncounted warm-up
+  289-token long prompt, `max_new_tokens` 32 and 128, greedy. One uncounted warm-up
   generation per configuration.
 - Correctness sanity: a subset of `validation/validate.py` (short, medium, and
   near-limit prompts) against the CPU plugin on the same build; token match and top-1
@@ -383,7 +383,7 @@ stronger. Either way the answer is currently unknown.
 
 **Workload and warm-up.**
 
-- The three fixed prompts (5, 23, and 349 tokens), `max_new_tokens` 32 and 128, greedy;
+- The three fixed prompts (5, 23, and 289 tokens), `max_new_tokens` 32 and 128, greedy;
   buckets 256 and 512 for the long prompt.
 - One uncounted warm-up generation, plus a separately reported `first_infer_s` (GPU
   kernel compilation may land on the first inference).
@@ -549,8 +549,9 @@ Each item is deferred for a stated reason. Revisit after each completed mileston
 - **Multimodal, ASR/TTS, image generation** — different pipelines, models, and
   evaluation criteria; outside the LLM path this repository is currently building.
 - **NPU+GPU split execution / pipeline parallelism** — no supported mechanism in this
-  stack, and the measured two-pipeline contention suggests it would be counterproductive
-  without upstream scheduling support.
+  stack; the clean two-pipeline runs show only a modest concurrent-throughput gain
+  (~16% under 4 clients, none sequential), which does not suggest large wins from
+  splitting work without upstream scheduling support.
 - **Contexts above 1024 tokens** — depends on M1's results and on NPU memory behavior;
   scheduling it before the 1024 data exists would be guessing.
 - **Model hot-swap and cache management** — convenience engineering with no capability

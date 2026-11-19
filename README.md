@@ -20,9 +20,9 @@ Status: complete (2026-11-19). Everything below refers to that project unless no
 - **NPUW path (primary)**: OpenVINO GenAI `LLMPipeline` on `device='NPU'`, running the
   original stateful Qwen3-0.6B INT4 OpenVINO IR end-to-end on the NPU, tuned to
   **45 tokens/s decode** and **~190 ms time-to-first-token** for short prompts.
-- **Correctness validated** against the same build running on CPU: 9 of 10 battery
-  tests token-identical; the one divergence is a near-tie argmax flip from FP16
-  precision (details and measured drift in
+- **Correctness validated** against the same build running on CPU: 8 of 10 battery
+  tests token-identical; one diverges by a near-tie argmax flip from FP16 precision,
+  and one matches on all 127 common tokens but the NPU stopped one token short of 128 (details and measured drift in
   [docs/correctness.md](docs/correctness.md)).
 - **Serving prototype**: single persistent pipeline + FIFO queue with request
   isolation, explicit sessions, and graceful shutdown
@@ -50,9 +50,12 @@ Full details, install layout, and the two mandatory workarounds:
 
 ### NPUW performance ([docs/npuw-tuning.md](docs/npuw-tuning.md))
 
-All figures use the token-ID accounting (issue #1: throughput is computed from
-generated token IDs, not streamer callback counts; re-measured 2026-11-19, rows
-`re-*` in [`benchmarks/results/results.jsonl`](benchmarks/results/results.jsonl)).
+TTFT and decode figures use the token-ID accounting (issue #1: throughput is computed
+from generated token IDs, not streamer callback counts; re-measured 2026-11-19, rows
+`re-*` in [`benchmarks/results/results.jsonl`](benchmarks/results/results.jsonl)). The
+cold-compile column was not re-measured; it comes from the historical cold rows
+(`baseline-cold`, `e1-bestperf-cold`, `e2-mp64-bestperf`), which token accounting does
+not affect.
 
 | Configuration | TTFT | Decode | Cold compile |
 |---|---|---|---|
@@ -64,18 +67,20 @@ generated token IDs, not streamer callback counts; re-measured 2026-11-19, rows
   into the decode denominator); a second correction (issue #1) replaced the streamer
   callback count with the generated-token count (31 callbacks for 32 tokens is typical).
 - Chunked prefill was tested and was **slower** than static prefill for this
-  workload (476 vs 691 tok/s prefill on a 349-token prompt) — not recommended here.
+  workload (476 vs 691 tok/s prefill on a 289-token prompt; historical rows `e5*`) — not recommended here.
 
 ### Correctness ([docs/correctness.md](docs/correctness.md))
 
-- 9/10 battery tests token-identical CPU vs NPU (prompts 5–193 tokens, generations
-  32–128 tokens). The single divergence: a near-tie argmax flip on a repeated-token
-  prompt, semantically equivalent output — the expected FP16 signature, not cache
-  corruption.
+- 8/10 battery tests strictly token-identical CPU vs NPU (prompts 5–193 tokens,
+  generations 32–128 tokens). The one token divergence: a near-tie argmax flip on a
+  repeated-token prompt, semantically equivalent output — the expected FP16 signature,
+  not cache corruption. The tenth (`near-limit-193t@128`) matches on all 127 common
+  tokens, but the NPU generated 127 tokens vs the CPU's 128 (193 + 127 = 320 =
+  `MAX_PROMPT_LEN` + `MIN_RESPONSE_LEN`).
 - NPUW KV cache is **FP16** — verified by source inspection
   (`choose_kv_cache_storage_type()` default; `NPUW_LLM_OPTIMIZE_FP8=false`), not
   inferred from the INT4 weights. Activations are converted bf16→f16 model-wide.
-- Per-step top-1-logprob drift: mean |ΔlogP| ≤ 0.04, max ≤ 0.15 per step; cosine similarity over the 16-step top-1 logprob vectors (CPU vs NPU) ≥ 0.9993 — **not** full-vocabulary logit cosine (see [docs/correctness.md](docs/correctness.md)). The only logit-level comparison (cosine of the last-position logit vector, 0.9916, measured 2026-11-18) is on the separate manual static-blob fallback path, not NPUW.
+- Per-step top-1-logprob drift: mean |ΔlogP| ≤ 0.04, max ≤ 0.15 per step; cosine similarity over the 16-step top-1 logprob vectors (CPU vs NPU) ≥ 0.9992 (raw minimum 0.99929) — **not** full-vocabulary logit cosine (see [docs/correctness.md](docs/correctness.md)). The only logit-level comparison (cosine of the last-position logit vector, 0.9916, measured 2026-11-18) is on the separate manual static-blob fallback path, not NPUW.
 - Prompts longer than `MAX_PROMPT_LEN` are cleanly rejected (no silent truncation).
 
 ### Serving ([docs/serving.md](docs/serving.md))
@@ -85,9 +90,12 @@ generated token IDs, not streamer callback counts; re-measured 2026-11-19, rows
   no throughput gain.
 - The earlier "two pipelines are 22% slower" claim is **withdrawn**: it compared
   single-pipeline runs that each had 4/20 failed requests (counted as completed)
-  against clean two-pipeline runs. Counting successful requests only, the measured
-  arrangements are within ~3% of each other; a clean, comparable re-run is pending
-  (issue #2). See [docs/serving.md](docs/serving.md).
+  against clean two-pipeline runs. The clean re-runs (rows `re-w*` in
+  [`serving/results/serving-results.jsonl`](serving/results/serving-results.jsonl),
+  20/20 successful in every run) replace that comparison: sequential throughput is a
+  wash (1.93 vs 1.88 successful req/s for one vs two pipelines), and under 4 concurrent
+  clients two pipelines are ~16% faster (2.17 vs 1.86 req/s). See
+  [docs/serving.md](docs/serving.md).
 
 ### Driver compiler ([docs/driver-compiler.md](docs/driver-compiler.md))
 
@@ -133,8 +141,7 @@ Two runtime gotchas discovered during the project (both bite silently):
 
 ## Evidence classification
 
-- **Verified**: everything in the results tables above (subject to the pending
-  re-measurements flagged there), with raw JSON in the `results/` directories. Device
+- **Verified**: everything in the results tables above, with raw JSON in the `results/` directories. Device
   evidence per run is the requested device plus the `/proc/self/maps` NPU-plugin
   check — this shows the NPU plugin was loaded, not that every measured inference
   executed on the NPU; no per-inference execution telemetry is available in this

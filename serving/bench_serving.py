@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -73,6 +74,16 @@ def post_generate(port: int, obj: dict, timeout: int = 300) -> tuple[int, dict]:
             body = {'error': raw.decode('utf-8', 'replace').strip()[:200]
                     or f'http status {e.code} with empty body'}
         return e.code, body
+
+
+def nearest_rank(sorted_values: list[float], q: float) -> float:
+    """Nearest-rank percentile of an ascending list (q in (0, 1]).
+
+    For n=20 and q=0.95 this is the 19th smallest value, not the maximum
+    (the pre-2026-11-19 client used index int(0.95*n), i.e. the maximum).
+    """
+    rank = max(1, math.ceil(q * len(sorted_values)))
+    return sorted_values[rank - 1]
 
 
 def error_class(rec: dict) -> str:
@@ -155,7 +166,9 @@ def bench(args: argparse.Namespace) -> dict:
         'errors_by_class': errors_by_class,
         'requests': records,
         'latency_p50_s': round(latencies[len(latencies)//2], 3) if latencies else None,
-        'latency_p95_s': round(latencies[int(len(latencies)*0.95)], 3) if latencies else None,
+        'latency_p95_s': round(nearest_rank(latencies, 0.95), 3) if latencies else None,
+        'latency_percentile_method': 'p95: nearest-rank (ceil(0.95*n)-th '
+                                     'smallest); p50: element n//2 (upper median)',
         'latency_max_s': round(latencies[-1], 3) if latencies else None,
     }
     if failed:

@@ -15,13 +15,13 @@ Measures, per configuration:
     NPU plugin is loaded, NOT that each measured inference executed on the
     NPU; no per-inference execution telemetry exists in this build.
 
-TODO(re-runs, issues #1/#6): the rows already in benchmarks/results/
-results.jsonl were produced with the OLD accounting (streamer-callback
-count as the decode numerator) and the OLD npu_confirmed semantics. Re-run
-on the NPU workstation with this script and refresh: baseline rows
-(baseline-warm/cold), BEST_PERF rows (e1/e2/e2b/e3/e4/e5/e5b), and the
-figures in docs/npuw-tuning.md + README.md (docs owned separately). Do not
-mix old and new rows in one comparison.
+Result rows: rows labeled re-* in benchmarks/results/results.jsonl were
+produced by this script with token-ID accounting (re-measured 2026-11-19).
+Older rows (baseline-*, e1..e5b) used the superseded streamer-callback
+numerator and npu_confirmed semantics; they are kept for history and must
+not be mixed with re-* rows in one decode-throughput comparison. Not
+re-measured with this script: cold-compile rows and the chunked-prefill
+comparison (e5/e5b) — compile time is unaffected by token accounting.
 
 Usage:
   benchmark.py [--label NAME] [--repeats N] [--max-new N] [--prompt STR]
@@ -232,10 +232,16 @@ def run_benchmark(args: argparse.Namespace) -> dict:
               f"({run['generated_tokens']} generated / {run['streamer_chunks']} callbacks) "
               f"prefill={run['prefill_tok_s']} tok/s", flush=True)
         if i == 0:
+            # EncodedResults has no .texts; decode its token IDs.  Never
+            # record an object repr (non-deterministic address).
             try:
-                result['output_preview'] = out.texts[0][:160]
-            except (AttributeError, IndexError, TypeError):
-                result['output_preview'] = str(out)[:160]
+                if tokenized is not None:
+                    text = pipe.get_tokenizer().decode(out.tokens[0])
+                else:
+                    text = out.texts[0]
+                result['output_preview'] = str(text)[:160]
+            except Exception:  # noqa: BLE001 - preview is informational only
+                result['output_preview'] = None
 
     result['runs'] = runs
 

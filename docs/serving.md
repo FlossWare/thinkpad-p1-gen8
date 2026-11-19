@@ -25,11 +25,13 @@ sequentially.
 - **Predictable errors**: over-length prompts (session history included) are rejected
   pre-queue with HTTP 400 and a specific message (`prompt_too_long: N tokens >
   MAX_PROMPT_LEN 64`); malformed/missing/invalid fields are rejected with 400 before
-  queueing; pipeline exceptions surface as HTTP 500; 300 s in-queue timeout → HTTP
-  504; a full request queue (bounded, `--max-queue`/`QUEUE_MAX`, default 32) →
+  queueing; pipeline and tokenizer exceptions surface as HTTP 500 JSON; a request
+  not answered within 300 s gets HTTP 504 after 300 s (a still-queued request is then
+  skipped; an in-flight one finishes but its result is discarded and never recorded); a full request queue (bounded, `--max-queue`/`QUEUE_MAX`, default 32) →
   HTTP 429 `overloaded` and the request is not queued.
 - **Ordering**: requests to the same session serialize in arrival order (history
-  snapshot + generation + record are atomic); different sessions may run
+  snapshot + generation + record are atomic; a request abandoned with 504 after the
+  timeout is never recorded); different sessions may run
   concurrently. `POST /reset` is ordered with the session's generations and waits
   for earlier work before clearing history. At most 8 operations may be pending
   (running or waiting) per session; further ones get HTTP 429 immediately.
@@ -39,6 +41,12 @@ sequentially.
   logged and reported; HTTP handlers get until the drain deadline + 2 s to deliver
   their responses; the process then exits normally (no `os._exit`).
 - Endpoints: `POST /generate`, `POST /reset`, `GET /health`, `POST /shutdown`.
+- Known prototype limitations (not fixed): per-session history and gate objects are
+  kept for every distinct valid session id until process exit (no eviction), so
+  memory grows with the number of distinct sessions; on drain timeout, workers still
+  inside `generate()` are abandoned at interpreter exit (daemon threads), not finished;
+  `/health.requests_done` counts every dequeued request, including ones skipped after
+  a client timeout.
 
 ## Measurements
 
@@ -50,13 +58,19 @@ per-run sessions, **zero failures in every run**. Source:
 rows labeled `re-*`. "Nominal tok/s" = successful × 16 / wall (the server does not
 report generated-token counts; labeled as such in the raw rows).
 
-| Arrangement (raw label) | Attempted | Failed | Successful req/s (nominal tok/s) | p50 latency | p95 latency |
+| Arrangement (raw label) | Attempted | Failed | Successful req/s (nominal tok/s) | p50 latency | max latency (raw `latency_p95_s`) |
 |---|---|---|---|---|---|
 | 1 pipeline, sequential (`re-w1-sequential`) | 20 | 0 | 1.93 (30.9) | 0.50 s | 0.87 s |
 | 1 pipeline, 4 clients (`re-w1-concurrent-c4`) | 20 | 0 | 1.86 (29.8) | 2.03 s | 2.68 s |
 | 1 pipeline, 8 clients (`re-w1-concurrent-c8`) | 20 | 0 | 1.82 (29.0) | 4.43 s | 4.54 s |
-| 2 pipelines, sequential (`re-w2-sequential`) | 20 | 0 | 1.88 (30.0) | 0.51 s | 0.89 s |
-| 2 pipelines, 4 clients (`re-w2-concurrent-c4`) | 20 | 0 | 2.17 (34.7) | 1.83 s | 2.54 s |
+| 2 pipelines, sequential (`re-w2-sequential`) | 20 | 0 | 1.88 (30.1) | 0.51 s | 0.90 s |
+| 2 pipelines, 4 clients (`re-w2-concurrent-c4`) | 20 | 0 | 2.17 (34.7) | 1.83 s | 1.91 s |
+
+Percentile note: the client that produced these rows computed `latency_p95_s` as
+element `int(0.95·n)` of the sorted latencies, which for n = 20 is the **maximum**
+(`latency_p95_s == latency_max_s` in every `re-*` row), so the last column is labeled
+as such. The client now uses nearest-rank p95 (19th of 20) and records
+`latency_percentile_method`; p50 is element `n//2` (upper median).
 
 Live SIGTERM shutdown was exercised after the two-pipeline runs: the server drained
 (in-flight request finished, 0 queued requests cancelled), logged
@@ -76,7 +90,8 @@ Findings (clean re-runs):
    pipelines cost a second model load and NPU device memory for no sequential gain,
    so **one pipeline + FIFO queue remains the recommendation**; add a second worker
    only if concurrent-request latency matters more than simplicity.
-3. Host RSS for the two-pipeline process is only ~422 MB — the compiled blobs live in
+3. Host RSS for the two-pipeline process was observed at only ~422 MB (a manual
+   observation; RSS is not recorded in `serving-results.jsonl`) — the compiled blobs live in
    NPU device memory, not host heap (single-pipeline processes measured 1.2–1.8 GB
    peak RSS in `benchmark.py`, which includes Python-side tensors).
 4. Session-history growth is the practical capacity limit: at mpl=64 a session can

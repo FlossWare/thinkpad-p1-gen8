@@ -24,6 +24,10 @@ Ordering semantics (issue #4)
   is held from before the history snapshot is built until the generated
   answer has been appended to the history, so prompt construction and history
   recording are atomic with respect to other same-session operations.
+  Exception: a request that hits ``GENERATE_TIMEOUT_S`` gets HTTP 504 and
+  releases the gate immediately; if its generation had already started it
+  runs to completion but its result is discarded (never recorded), so
+  history order is unaffected.
 * Requests to **different** sessions never share a gate and may execute
   concurrently, limited only by the number of pipelines/workers.
 * ``POST /reset`` participates in the same per-session order: it **waits**
@@ -318,6 +322,10 @@ class SessionGate:
             return self._next_ticket - self._now_serving
 
 
+class HistoryLimitError(ValueError):
+    """A session's history plus the new prompt exceeds HISTORY_LIMIT_TOKENS."""
+
+
 class SessionStore:
     """Explicit per-session history; requests are self-contained.
 
@@ -346,7 +354,7 @@ class SessionStore:
             full = ''.join(hist) + prompt
             n_tok = counter(full)
             if n_tok > HISTORY_LIMIT_TOKENS:
-                raise ValueError(f'session history ({n_tok} tokens) exceeds '
+                raise HistoryLimitError(f'session history ({n_tok} tokens) exceeds '
                                  f'{HISTORY_LIMIT_TOKENS}-token limit; reset the session')
             return full, n_tok
 
@@ -386,12 +394,6 @@ class ServerState:
         self._shutdown_lock = threading.Lock()
         self._rr = 0
         self._rr_lock = threading.Lock()
-
-    def next_worker(self) -> Worker:
-        with self._rr_lock:
-            worker = self.workers[self._rr % len(self.workers)]
-            self._rr += 1
-            return worker
 
     def submit(self, req: dict) -> Worker:
         """Round-robin submit, falling over to any worker with queue room.
@@ -562,6 +564,9 @@ def make_handler(state: ServerState):
 
             # Shutdown is idempotent and must be answerable while shutting down.
             if path == '/shutdown':
+                # The body (if any) is not read: close the connection so
+                # unread bytes cannot be parsed as a following request.
+                self.close_connection = True
                 started = request_shutdown(state)
                 self._json(200, {'ok': True,
                                  'detail': 'shutting down' if started
@@ -569,6 +574,7 @@ def make_handler(state: ServerState):
                 return
 
             if state.shutdown:
+                self.close_connection = True  # body not read; see above
                 self._json(503, {'error': 'shutting_down'})
                 return
 
@@ -633,8 +639,14 @@ def make_handler(state: ServerState):
                 try:
                     full_prompt, n_tok = state.sessions.build_prompt(
                         session, prompt, counter)
-                except ValueError as e:
+                except HistoryLimitError as e:
                     self._json(400, {'error': str(e)})
+                    return
+                except Exception as e:  # noqa: BLE001 - tokenizer failure
+                    # Server-side failure (e.g. the tokenizer raised): answer
+                    # with a JSON 500 instead of dropping the connection.
+                    self._json(500, {'error': f'tokenizer_error: '
+                                              f'{type(e).__name__}: {e}'})
                     return
 
                 if n_tok > state.workers[0].max_prompt_len:
@@ -662,10 +674,12 @@ def make_handler(state: ServerState):
 
                 if not req['done'].wait(timeout=GENERATE_TIMEOUT_S):
                     # Ask the worker to skip it if it has not started.  If it
-                    # already started, wait for it to finish so the session
-                    # gate keeps same-session ordering intact.
+                    # already started, its result is abandoned: it is never
+                    # recorded in the session history, so releasing the
+                    # session gate now cannot reorder history.  The 504 is
+                    # delivered after GENERATE_TIMEOUT_S, not after the
+                    # (possibly wedged) generation returns.
                     req['cancelled'] = True
-                    req['done'].wait()
                     self._json(504, {'error': 'timeout'})
                     return
                 if 'error' in req:
@@ -769,8 +783,9 @@ def graceful_shutdown(state: ServerState, claimed: bool = False) -> dict | None:
 
     if report['timed_out']:
         print(f'[shutdown] WARNING: worker(s) {report["unstopped_workers"]} did '
-              f'not stop within {state.drain_timeout_s}s; original requests will '
-              f'finish in daemon threads without a forced process exit',
+              f'not stop within {state.drain_timeout_s}s; their in-flight requests '
+              f'are abandoned (daemon threads stop at interpreter exit; no '
+              f'forced os._exit is used)',
               file=sys.stderr, flush=True)
     if report['unfinished_handlers']:
         print(f'[shutdown] WARNING: {report["unfinished_handlers"]} HTTP '

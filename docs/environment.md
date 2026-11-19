@@ -67,11 +67,12 @@ tbb and both NPU compiler libs are already inside the wheel's `openvino/libs/`.
 Launch script: `scripts/run-npuw.sh` (the original acceptance script lives outside this repo). Baseline config:
 `MAX_PROMPT_LEN=256, MIN_RESPONSE_LEN=64, CACHE_DIR=~/AI/npuw-cache`.
 
-**Current baseline (mpl=256, default hints) — measured 2026-11-19 with `benchmarks/benchmark.py`** (decode timed first→last streamer callback; see [docs/npuw-tuning.md](npuw-tuning.md) and [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl), rows `baseline-warm` / `baseline-cold` / `e1-bestperf-warm`). These rows used the streamer callback count as the decode numerator, so the tok/s figures are **pending re-measurement** with the token-ID accounting (issue #1):
+**Current baseline (mpl=256, default hints) — measured 2026-11-19 with `benchmarks/benchmark.py`, token-ID accounting** (issue #1: numerator = generated token IDs − 1, interval = first streamer callback → `generate()` return; see [docs/npuw-tuning.md](npuw-tuning.md) and [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl), rows `re-baseline-warm`, `re-bestperf-mpl256`, `re-mp64-bestperf`; cold-compile times come from the historical `baseline-cold` / `e1-bestperf-cold` rows, since compile time does not depend on token accounting):
 - cold compile: **6.2 s**; warm load (cache hit): **1.0 s**
 - TTFT: **297 ms**; decode: **36.5 tok/s**
 - with `GENERATE_HINT=BEST_PERF`: **42.2 tok/s** decode at mpl=256, **44.6 tok/s** at mpl=64 (TTFT 189 ms; cold compile 19.8 s, ~1.1 s warm — see tuning doc)
-- peak RSS: 1216 MB (1216–1650 MB range across sessions)
+- peak RSS: 1216 MB (`re-baseline-warm`); warm-cache `re-*` rows span 1215–1252 MB, and
+  historical rows that compiled in-process reached up to 1814 MB
 - NPU plugin libraries mapped in-process (`/proc/self/maps`): `libopenvino_intel_npu_plugin.so`,
   `libopenvino_intel_npu_compiler_loader.so`, `libze_intel_npu.so.1.32.0` — this is
   plugin-load evidence, not independent proof of per-inference NPU execution (issue #6).
@@ -81,7 +82,7 @@ Launch script: `scripts/run-npuw.sh` (the original acceptance script lives outsi
   verification is not claimed.
 
 Superseded historical measurements (original 2026-11-18, retained for context only):
-the earlier decode figures of **11.4–15.4 tok/s** (32-token greedy runs) and the **"original baseline 13 tok/s"** are superseded: they divided total generation wall time (including TTFT) by token count, folding prefill and overhead into decode. The earlier **6.9 s** cold load+compile and **1.2 s** warm load were separate, earlier load-time measurements (not affected by that artifact) and are superseded by the 6.2 s / 1.0 s benchmark rows above. The figures above use the token-ID accounting (issue #1, re-measured 2026-11-19, rows `re-*`); [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl) is the source of truth for performance.
+the earlier decode figures of **11.4–15.4 tok/s** (32-token greedy runs) and the **"original baseline 13 tok/s"** are superseded: they divided total generation wall time (including TTFT) by token count, folding prefill and overhead into decode. The earlier **6.9 s** cold load+compile and **1.2 s** warm load were separate, earlier load-time measurements (not affected by that artifact) and are superseded by the 6.2 s / 1.0 s benchmark rows above. The callback-count decode figures of 32.9 tok/s (baseline) and 41.1 tok/s (BEST_PERF) in the historical `baseline-warm` / `e1-bestperf-warm` rows are likewise superseded by the token-ID re-measurement above; [`benchmarks/results/results.jsonl`](../benchmarks/results/results.jsonl) is the source of truth for performance.
 
 Caveats learned:
 - GenAI python scripts **must** use a `if __name__ == '__main__':` guard — GenAI's
