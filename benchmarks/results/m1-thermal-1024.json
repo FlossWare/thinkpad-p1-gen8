@@ -1,0 +1,191 @@
+{
+ "ts": "2026-11-19T12:45:56",
+ "config": "mpl=1024 mrl=64 BEST_PERF, 16-turn sustained session",
+ "turns": [
+  {
+   "prompt_tokens": 23,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1364,
+   "decode_tok_s": 41.69,
+   "wall_s": 2.648,
+   "turn": 0
+  },
+  {
+   "prompt_tokens": 114,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1651,
+   "decode_tok_s": 39.95,
+   "wall_s": 2.742,
+   "turn": 1
+  },
+  {
+   "prompt_tokens": 228,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1364,
+   "decode_tok_s": 42.2,
+   "wall_s": 2.629,
+   "turn": 2
+  },
+  {
+   "prompt_tokens": 298,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1374,
+   "decode_tok_s": 41.71,
+   "wall_s": 2.648,
+   "turn": 3
+  },
+  {
+   "prompt_tokens": 416,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.3602,
+   "decode_tok_s": 37.84,
+   "wall_s": 3.025,
+   "turn": 4
+  },
+  {
+   "prompt_tokens": 487,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.2567,
+   "decode_tok_s": 39.53,
+   "wall_s": 2.85,
+   "turn": 5
+  },
+  {
+   "prompt_tokens": 604,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1447,
+   "decode_tok_s": 41.38,
+   "wall_s": 2.667,
+   "turn": 6
+  },
+  {
+   "prompt_tokens": 679,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1402,
+   "decode_tok_s": 41.27,
+   "wall_s": 2.667,
+   "turn": 7
+  },
+  {
+   "prompt_tokens": 752,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.2614,
+   "decode_tok_s": 41.67,
+   "wall_s": 2.773,
+   "turn": 8
+  },
+  {
+   "prompt_tokens": 843,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1848,
+   "decode_tok_s": 40.86,
+   "wall_s": 2.727,
+   "turn": 9
+  },
+  {
+   "prompt_tokens": 957,
+   "requested": 64,
+   "generated": 64,
+   "ttft_s": 1.1442,
+   "decode_tok_s": 35.84,
+   "wall_s": 2.902,
+   "turn": 10
+  }
+ ],
+ "thermal": {
+  "available": true,
+  "thermal_zones": [
+   "thermal_zone0",
+   "thermal_zone1",
+   "thermal_zone2",
+   "thermal_zone3",
+   "thermal_zone4",
+   "thermal_zone5",
+   "thermal_zone6",
+   "thermal_zone7",
+   "thermal_zone8",
+   "thermal_zone9"
+  ],
+  "rapl_domains": [
+   "intel-rapl-mmio:0",
+   "intel-rapl:0",
+   "intel-rapl:0:0",
+   "intel-rapl:0:1",
+   "intel-rapl:1"
+  ],
+  "n_samples": 33,
+  "per_zone_stats": {
+   "thermal_zone0": {
+    "min": 55000,
+    "max": 59000,
+    "first": 57000,
+    "last": 55000
+   },
+   "thermal_zone1": {
+    "min": 20000,
+    "max": 20000,
+    "first": 20000,
+    "last": 20000
+   },
+   "thermal_zone2": {
+    "min": 44050,
+    "max": 46050,
+    "first": 44050,
+    "last": 46050
+   },
+   "thermal_zone3": {
+    "min": 1050,
+    "max": 1050,
+    "first": 1050,
+    "last": 1050
+   },
+   "thermal_zone4": {
+    "min": 53050,
+    "max": 85050,
+    "first": 75050,
+    "last": 54050
+   },
+   "thermal_zone5": {
+    "min": 39050,
+    "max": 39050,
+    "first": 39050,
+    "last": 39050
+   },
+   "thermal_zone6": {
+    "min": 54000,
+    "max": 85000,
+    "first": 75000,
+    "last": 54000
+   },
+   "thermal_zone7": {
+    "min": 35050,
+    "max": 37050,
+    "first": 36050,
+    "last": 35050
+   },
+   "thermal_zone8": {
+    "min": 54000,
+    "max": 85000,
+    "first": 76000,
+    "last": 54000
+   },
+   "thermal_zone9": {
+    "min": 44000,
+    "max": 45000,
+    "first": 44000,
+    "last": 44000
+   }
+  },
+  "note": ""
+ }
+}

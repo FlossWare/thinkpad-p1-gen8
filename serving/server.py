@@ -122,6 +122,7 @@ Endpoints:
 Usage:
   server.py [--port 8931] [--workers 1] [--max-prompt-len 64]
             [--max-queue 32] [--max-sessions 1024] [--drain-timeout 30]
+            [--history-limit 1024]
 """
 from __future__ import annotations
 
@@ -1033,10 +1034,20 @@ def graceful_shutdown(state: ServerState, claimed: bool = False) -> dict | None:
 
 
 def main() -> None:
+    global HISTORY_LIMIT_TOKENS
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, default=8931)
     ap.add_argument('--workers', type=int, default=1, choices=(1, 2))
     ap.add_argument('--max-prompt-len', type=int, default=MAX_PROMPT_LEN)
+    ap.add_argument('--history-limit', type=int,
+                    default=int(os.environ.get('HISTORY_LIMIT_TOKENS',
+                                               HISTORY_LIMIT_TOKENS)),
+                    help='maximum session history + prompt tokens before the '
+                         'session is rejected (must exceed --max-prompt-len '
+                         'plus the pipeline KV capacity margin; default '
+                         f'{HISTORY_LIMIT_TOKENS}; env HISTORY_LIMIT_TOKENS). '
+                         'Raise to the bucket + MIN_RESPONSE_LEN when serving '
+                         'MAX_PROMPT_LEN >= 1024 (roadmap M1).')
     ap.add_argument('--max-queue', type=int, default=DEFAULT_MAX_QUEUE,
                     help='bounded per-worker request queue capacity '
                          f'(default {DEFAULT_MAX_QUEUE}; env QUEUE_MAX)')
@@ -1054,6 +1065,11 @@ def main() -> None:
         ap.error('--max-sessions must be >= 1')
     if args.drain_timeout < 0:
         ap.error('--drain-timeout must be >= 0')
+    if args.history_limit <= args.max_prompt_len:
+        ap.error('--history-limit must exceed --max-prompt-len '
+                 '(history must be able to fill the prompt bucket)')
+
+    HISTORY_LIMIT_TOKENS = args.history_limit
 
     sessions = SessionStore(max_sessions=args.max_sessions)
     workers: list[Worker] = []

@@ -33,7 +33,7 @@ argued with rather than guessed at.
 
 | Rank | Milestone | Practical value | Feasibility | Score | Effort | Why this rank |
 |---|---|---|---|---|---|---|
-| 1 | **M1 — Sustained multi-turn / longer-context serving** | 5 | 5 | 25 | M | Turns the working 0.6B path into something usable: at the current 64-token bucket a session dies after ~3 short exchanges ([docs/serving.md](serving.md)). Every artifact already exists; the work is a harness plus a server limit change. It also produces the first sustained-load observations the thermal question needs. |
+| 1 | **M1 — Sustained multi-turn / longer-context serving** | 5 | 5 | 25 | M | Turns the working 0.6B path into something usable: at the current 64-token bucket a session dies after ~3 short exchanges ([docs/serving.md](serving.md)). COMPLETE 2026-11-19: mpl=1024 recommended for conversations; decode is context-independent; session isolation verified under history growth (results in the M1 section). |
 | 2= | **M2 — Larger model on the NPU** | 5 | 3 | 15 | L | The biggest capability lever: 0.6B is a working path, not necessarily a useful assistant. Feasibility is uncertain because a new INT4 IR must be converted and the 3720 NPU may not compile or fit it. |
 | 2= | **M4 — Driver/runtime compatibility matrix** | 3 | 5 | 15 | S, recurring | Cheap insurance. The 3720 compiler-selection defect is closed upstream without a fix ([docs/driver-compiler.md](driver-compiler.md)), so every stack upgrade is a risk to a working machine. Reuses existing smoke tests. Runs in parallel with the capability track and does not compete for it. |
 | 4 | **M3 — Intel Arc GPU characterization** | 4 | 3 | 12 | M | Answers the other half of the platform question, but with the same 0.6B artifact it changes device choice more than capability. The GPU path is entirely untested and its runtime may not be installed. Best done after M1's harness exists and alongside/after M2 so the larger IR can also be tried on the GPU. |
@@ -200,7 +200,7 @@ numerator and must not be mixed with `re-*` in one comparison) and
 
 ### M1 — Sustained multi-turn and longer-context serving on the NPU
 
-**Status:** ACTIVE, not started. **Effort:** medium.
+**Status:** COMPLETE (2026-11-19; results at the end of this section). **Effort:** medium.
 
 **Question.** With the existing Qwen3-0.6B INT4 NPUW pipeline and the single-worker
 server, what happens to TTFT, decode rate, per-turn latency, and memory as a realistic
@@ -285,6 +285,50 @@ optional `temp_c` / `power_w`. Per bucket: cold compile, warm load, throughput, 
 a stated recommended bucket for conversation use, all raw JSONL checked in, and any
 negative result (e.g., 1024 rejected earlier than expected, thermal drift observed)
 recorded rather than omitted.
+
+**Results (measured 2026-11-19 — M1 COMPLETE).** Harnesses as built:
+`benchmarks/multi_turn.py` (direct pipeline) and `serving/m1_server_probe.py`
+(HTTP; queue wait + isolation), plus `benchmarks/m1_thermal_pass.py` (thermal
+annex). Raw data: `benchmarks/results/m1-multi-turn.json`,
+`serving/results/m1-server-256.json`, `serving/results/m1-server-1024.json`,
+`benchmarks/results/m1-thermal-1024.json` (model IR sha256 manifest included in
+the first). Conversation shape: ~14-token system prompt + 8 user prompts
+(6–54 tokens), 64-token greedy replies → ~87 tokens of growth per turn.
+
+| Bucket (mpl) | KV capacity | Turns before stop | Steady TTFT | Steady decode | Cold compile |
+|---|---|---|---|---|---|
+| 256 | 320 | 3 (direct) / 4 (HTTP) | 291 ms | 47.6 tok/s | 1.3 s (cached) |
+| 512 | 576 | 6 | 441 ms | 48.6 tok/s | 21.0 s |
+| 1024 | 1088 | 11 (direct) / 14 (HTTP) | 1,204 ms | 43.0 tok/s | 22.3 s |
+
+Measured findings:
+
+1. **Decode rate is context-independent**: 38–48 tok/s at every bucket and every
+   turn depth; conversation growth does not degrade decode.
+2. **TTFT is bucket-dominated and flat across turns**: at mpl=1024 TTFT is
+   ~1.14 s at turn 1 and turn 11 alike — every turn pays the full padded-bucket
+   prefill. TTFT is a function of the configured bucket, not the conversation.
+3. **Conversation length follows the KV-capacity rule exactly** (no
+   earlier-than-expected failure): turns ≈ (bucket + mrl − first prompt) / ~87.
+   The server rejects the over-capacity turn cleanly (`prompt_too_long`, exact
+   token count, HTTP 400) — recorded as a stop, never a crash.
+4. **Queue wait and isolation (HTTP)**: 2–5 ms queue wait solo and with two
+   interleaved sessions; interleaved per-turn latencies match solo — session
+   isolation holds under history growth.
+5. **Thermal annex**: thermal zones readable (10 zones); during a sustained
+   11-turn mpl=1024 session the sampled zone ranged 55–59 °C — no throttling
+   signature. RAPL domain `intel-rapl:0` was NOT readable (recorded as
+   unavailable; no power values are estimated).
+6. **Cold compile is a one-time per-bucket cost** (21–22 s for 512/1024, then
+   ~1 s warm reload from the persistent cache).
+
+**Recommended bucket for conversation use: mpl=1024.** ~1.2 s TTFT and ~3.0–3.4 s
+per 64-token turn remain interactively usable, and the bucket holds 11–14 turns of
+this conversation shape; mpl=256 is snappier (~1.9 s/turn) but holds only 3–4
+turns. Serve with `--max-prompt-len 1024 --history-limit 1088` (the
+`--history-limit` flag was added for this milestone and is documented in
+docs/serving.md). Longer conversations need either a larger bucket (compile cost
+and TTFT grow with the bucket) or client-side history truncation.
 
 ---
 

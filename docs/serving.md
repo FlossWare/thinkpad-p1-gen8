@@ -108,6 +108,9 @@ LRU eviction on admission* (not hard rejection of new sessions).
   Per-session history is checked *before* a turn, and the answer is appended afterwards.
   The counted prompt must pass `prompt_too_long` (`MAX_PROMPT_LEN`, 64 by default) and
   `HISTORY_LIMIT_TOKENS` (1024), and prompt + `max_new_tokens` must fit the KV window.
+  `HISTORY_LIMIT_TOKENS` is configurable (`--history-limit` / env) and must exceed
+  `--max-prompt-len`; raise it to bucket + `MIN_RESPONSE_LEN` (e.g. 1088 for mpl=1024)
+  when serving large buckets (roadmap M1).
   So a retained history is roughly one accepted prompt plus its answer: about
   `MAX_PROMPT_LEN + MIN_RESPONSE_LEN` tokens (128 by default). Re-tokenizing joined text
   makes this approximate, not exact. The total is therefore at most 1024 sessions of

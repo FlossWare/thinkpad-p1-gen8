@@ -1,0 +1,209 @@
+{
+ "ts": "2026-11-19T12:05:22",
+ "bucket": 256,
+ "turns": 6,
+ "health_at_start": {
+  "ok": true,
+  "shutting_down": false,
+  "workers": 1,
+  "requests_done": [
+   5
+  ],
+  "errors": [
+   0
+  ],
+  "cancelled": [
+   0
+  ],
+  "queue_depth": [
+   0
+  ],
+  "queue_capacity": [
+   32
+  ],
+  "queue_depth_total": 0,
+  "queue_capacity_total": 32,
+  "busy": [
+   false
+  ],
+  "kv_capacity": 320,
+  "sessions": 2,
+  "sessions_active": 0,
+  "session_capacity": 1024,
+  "session_evictions": 0
+ },
+ "sessions": [
+  {
+   "session": "m1-1795107922-solo",
+   "mode": "solo",
+   "turns": [
+    {
+     "turn": 0,
+     "prompt_tokens": 9,
+     "client_wall_s": 1.931,
+     "server_gen_s": 1.929,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 1,
+     "prompt_tokens": 82,
+     "client_wall_s": 1.873,
+     "server_gen_s": 1.871,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 2,
+     "prompt_tokens": 156,
+     "client_wall_s": 1.771,
+     "server_gen_s": 1.769,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 3,
+     "prompt_tokens": 225,
+     "client_wall_s": 2.07,
+     "server_gen_s": 2.068,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 4,
+     "prompt_tokens": null,
+     "client_wall_s": 0.002,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "error": "prompt_too_long: 301 tokens > MAX_PROMPT_LEN 256; reset session or shorten"
+    }
+   ]
+  },
+  {
+   "session": "m1-1795107922-iso-0",
+   "mode": "interleaved",
+   "turns": [
+    {
+     "turn": 0,
+     "client_wall_s": 2.04,
+     "server_gen_s": 2.039,
+     "queue_wait_s": 0.001,
+     "prompt_tokens": 9
+    },
+    {
+     "turn": 1,
+     "client_wall_s": 2.065,
+     "server_gen_s": 2.063,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 82
+    },
+    {
+     "turn": 2,
+     "client_wall_s": 2.011,
+     "server_gen_s": 2.009,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 156
+    },
+    {
+     "turn": 3,
+     "client_wall_s": 2.403,
+     "server_gen_s": 2.401,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 225
+    },
+    {
+     "turn": 4,
+     "client_wall_s": 0.005,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 301 tokens > MAX_PROMPT_LEN 256; reset session or shorten"
+    },
+    {
+     "turn": 5,
+     "client_wall_s": 0.003,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 296 tokens > MAX_PROMPT_LEN 256; reset session or shorten"
+    }
+   ]
+  },
+  {
+   "session": "m1-1795107922-iso-1",
+   "mode": "interleaved",
+   "turns": [
+    {
+     "turn": 0,
+     "client_wall_s": 2.095,
+     "server_gen_s": 2.093,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 9
+    },
+    {
+     "turn": 1,
+     "client_wall_s": 2.132,
+     "server_gen_s": 2.129,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 82
+    },
+    {
+     "turn": 2,
+     "client_wall_s": 1.854,
+     "server_gen_s": 1.851,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 156
+    },
+    {
+     "turn": 3,
+     "client_wall_s": 1.967,
+     "server_gen_s": 1.965,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 225
+    },
+    {
+     "turn": 4,
+     "client_wall_s": 0.003,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 301 tokens > MAX_PROMPT_LEN 256; reset session or shorten"
+    },
+    {
+     "turn": 5,
+     "client_wall_s": 0.004,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 296 tokens > MAX_PROMPT_LEN 256; reset session or shorten"
+    }
+   ]
+  }
+ ],
+ "health_at_end": {
+  "ok": true,
+  "shutting_down": false,
+  "workers": 1,
+  "requests_done": [
+   17
+  ],
+  "errors": [
+   0
+  ],
+  "cancelled": [
+   0
+  ],
+  "queue_depth": [
+   0
+  ],
+  "queue_capacity": [
+   32
+  ],
+  "queue_depth_total": 0,
+  "queue_capacity_total": 32,
+  "busy": [
+   false
+  ],
+  "kv_capacity": 320,
+  "sessions": 5,
+  "sessions_active": 0,
+  "session_capacity": 1024,
+  "session_evictions": 0
+ }
+}

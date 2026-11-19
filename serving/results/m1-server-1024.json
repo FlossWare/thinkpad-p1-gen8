@@ -1,0 +1,419 @@
+{
+ "ts": "2026-11-19T12:07:10",
+ "bucket": 1024,
+ "turns": 16,
+ "health_at_start": {
+  "ok": true,
+  "shutting_down": false,
+  "workers": 1,
+  "requests_done": [
+   0
+  ],
+  "errors": [
+   0
+  ],
+  "cancelled": [
+   0
+  ],
+  "queue_depth": [
+   0
+  ],
+  "queue_capacity": [
+   32
+  ],
+  "queue_depth_total": 0,
+  "queue_capacity_total": 32,
+  "busy": [
+   false
+  ],
+  "kv_capacity": 1088,
+  "sessions": 0,
+  "sessions_active": 0,
+  "session_capacity": 1024,
+  "session_evictions": 0
+ },
+ "sessions": [
+  {
+   "session": "m1-1795108030-solo",
+   "mode": "solo",
+   "turns": [
+    {
+     "turn": 0,
+     "prompt_tokens": 9,
+     "client_wall_s": 3.88,
+     "server_gen_s": 3.878,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 1,
+     "prompt_tokens": 82,
+     "client_wall_s": 3.431,
+     "server_gen_s": 3.426,
+     "queue_wait_s": 0.005
+    },
+    {
+     "turn": 2,
+     "prompt_tokens": 156,
+     "client_wall_s": 3.307,
+     "server_gen_s": 3.305,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 3,
+     "prompt_tokens": 225,
+     "client_wall_s": 3.373,
+     "server_gen_s": 3.371,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 4,
+     "prompt_tokens": 301,
+     "client_wall_s": 3.405,
+     "server_gen_s": 3.402,
+     "queue_wait_s": 0.003
+    },
+    {
+     "turn": 5,
+     "prompt_tokens": 372,
+     "client_wall_s": 3.046,
+     "server_gen_s": 3.045,
+     "queue_wait_s": 0.001
+    },
+    {
+     "turn": 6,
+     "prompt_tokens": 448,
+     "client_wall_s": 3.202,
+     "server_gen_s": 3.2,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 7,
+     "prompt_tokens": 523,
+     "client_wall_s": 3.145,
+     "server_gen_s": 3.142,
+     "queue_wait_s": 0.003
+    },
+    {
+     "turn": 8,
+     "prompt_tokens": 596,
+     "client_wall_s": 3.06,
+     "server_gen_s": 3.058,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 9,
+     "prompt_tokens": 669,
+     "client_wall_s": 3.11,
+     "server_gen_s": 3.108,
+     "queue_wait_s": 0.002
+    },
+    {
+     "turn": 10,
+     "prompt_tokens": 743,
+     "client_wall_s": 2.966,
+     "server_gen_s": 2.963,
+     "queue_wait_s": 0.003
+    },
+    {
+     "turn": 11,
+     "prompt_tokens": 813,
+     "client_wall_s": 3.06,
+     "server_gen_s": 3.057,
+     "queue_wait_s": 0.003
+    },
+    {
+     "turn": 12,
+     "prompt_tokens": 889,
+     "client_wall_s": 3.014,
+     "server_gen_s": 3.009,
+     "queue_wait_s": 0.005
+    },
+    {
+     "turn": 13,
+     "prompt_tokens": 960,
+     "client_wall_s": 3.238,
+     "server_gen_s": 3.235,
+     "queue_wait_s": 0.003
+    },
+    {
+     "turn": 14,
+     "prompt_tokens": null,
+     "client_wall_s": 0.013,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "error": "prompt_too_long: 1036 tokens > MAX_PROMPT_LEN 1024; reset session or shorten"
+    }
+   ]
+  },
+  {
+   "session": "m1-1795108030-iso-0",
+   "mode": "interleaved",
+   "turns": [
+    {
+     "turn": 0,
+     "client_wall_s": 3.117,
+     "server_gen_s": 3.113,
+     "queue_wait_s": 0.004,
+     "prompt_tokens": 9
+    },
+    {
+     "turn": 1,
+     "client_wall_s": 2.996,
+     "server_gen_s": 2.991,
+     "queue_wait_s": 0.005,
+     "prompt_tokens": 82
+    },
+    {
+     "turn": 2,
+     "client_wall_s": 2.962,
+     "server_gen_s": 2.959,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 156
+    },
+    {
+     "turn": 3,
+     "client_wall_s": 3.01,
+     "server_gen_s": 3.008,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 225
+    },
+    {
+     "turn": 4,
+     "client_wall_s": 2.94,
+     "server_gen_s": 2.938,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 301
+    },
+    {
+     "turn": 5,
+     "client_wall_s": 3.024,
+     "server_gen_s": 3.021,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 372
+    },
+    {
+     "turn": 6,
+     "client_wall_s": 2.793,
+     "server_gen_s": 2.79,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 448
+    },
+    {
+     "turn": 7,
+     "client_wall_s": 3.015,
+     "server_gen_s": 3.013,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 523
+    },
+    {
+     "turn": 8,
+     "client_wall_s": 2.968,
+     "server_gen_s": 2.966,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 596
+    },
+    {
+     "turn": 9,
+     "client_wall_s": 2.854,
+     "server_gen_s": 2.851,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 669
+    },
+    {
+     "turn": 10,
+     "client_wall_s": 2.941,
+     "server_gen_s": 2.94,
+     "queue_wait_s": 0.001,
+     "prompt_tokens": 743
+    },
+    {
+     "turn": 11,
+     "client_wall_s": 2.905,
+     "server_gen_s": 2.902,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 813
+    },
+    {
+     "turn": 12,
+     "client_wall_s": 2.668,
+     "server_gen_s": 2.665,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 889
+    },
+    {
+     "turn": 13,
+     "client_wall_s": 2.669,
+     "server_gen_s": 2.667,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 960
+    },
+    {
+     "turn": 14,
+     "client_wall_s": 0.001,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 1036 tokens > MAX_PROMPT_LEN 1024; reset session or shorten"
+    },
+    {
+     "turn": 15,
+     "client_wall_s": 0.002,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 1035 tokens > MAX_PROMPT_LEN 1024; reset session or shorten"
+    }
+   ]
+  },
+  {
+   "session": "m1-1795108030-iso-1",
+   "mode": "interleaved",
+   "turns": [
+    {
+     "turn": 0,
+     "client_wall_s": 3.046,
+     "server_gen_s": 3.041,
+     "queue_wait_s": 0.005,
+     "prompt_tokens": 9
+    },
+    {
+     "turn": 1,
+     "client_wall_s": 3.047,
+     "server_gen_s": 3.022,
+     "queue_wait_s": 0.025,
+     "prompt_tokens": 82
+    },
+    {
+     "turn": 2,
+     "client_wall_s": 2.971,
+     "server_gen_s": 2.969,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 156
+    },
+    {
+     "turn": 3,
+     "client_wall_s": 3.063,
+     "server_gen_s": 3.061,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 225
+    },
+    {
+     "turn": 4,
+     "client_wall_s": 3.058,
+     "server_gen_s": 3.056,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 301
+    },
+    {
+     "turn": 5,
+     "client_wall_s": 2.856,
+     "server_gen_s": 2.854,
+     "queue_wait_s": 0.002,
+     "prompt_tokens": 372
+    },
+    {
+     "turn": 6,
+     "client_wall_s": 2.881,
+     "server_gen_s": 2.878,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 448
+    },
+    {
+     "turn": 7,
+     "client_wall_s": 2.829,
+     "server_gen_s": 2.821,
+     "queue_wait_s": 0.008,
+     "prompt_tokens": 523
+    },
+    {
+     "turn": 8,
+     "client_wall_s": 2.93,
+     "server_gen_s": 2.926,
+     "queue_wait_s": 0.004,
+     "prompt_tokens": 596
+    },
+    {
+     "turn": 9,
+     "client_wall_s": 2.946,
+     "server_gen_s": 2.943,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 669
+    },
+    {
+     "turn": 10,
+     "client_wall_s": 3.006,
+     "server_gen_s": 3.003,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 743
+    },
+    {
+     "turn": 11,
+     "client_wall_s": 2.874,
+     "server_gen_s": 2.871,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 813
+    },
+    {
+     "turn": 12,
+     "client_wall_s": 2.733,
+     "server_gen_s": 2.73,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 889
+    },
+    {
+     "turn": 13,
+     "client_wall_s": 2.74,
+     "server_gen_s": 2.737,
+     "queue_wait_s": 0.003,
+     "prompt_tokens": 960
+    },
+    {
+     "turn": 14,
+     "client_wall_s": 0.002,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 1036 tokens > MAX_PROMPT_LEN 1024; reset session or shorten"
+    },
+    {
+     "turn": 15,
+     "client_wall_s": 0.001,
+     "server_gen_s": null,
+     "queue_wait_s": null,
+     "prompt_tokens": null,
+     "error": "prompt_too_long: 1035 tokens > MAX_PROMPT_LEN 1024; reset session or shorten"
+    }
+   ]
+  }
+ ],
+ "health_at_end": {
+  "ok": true,
+  "shutting_down": false,
+  "workers": 1,
+  "requests_done": [
+   42
+  ],
+  "errors": [
+   0
+  ],
+  "cancelled": [
+   0
+  ],
+  "queue_depth": [
+   0
+  ],
+  "queue_capacity": [
+   32
+  ],
+  "queue_depth_total": 0,
+  "queue_capacity_total": 32,
+  "busy": [
+   false
+  ],
+  "kv_capacity": 1088,
+  "sessions": 3,
+  "sessions_active": 0,
+  "session_capacity": 1024,
+  "session_evictions": 0
+ }
+}
