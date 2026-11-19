@@ -5,6 +5,20 @@ median reported, one uncounted warm-up generation per process, TTFT measured via
 streamer callback (this build has no `get_perf_metrics`). NPU execution confirmed via
 `/proc/self/maps` for every row. Raw results: `benchmarks/results/results.jsonl`.
 
+> **Methodology update (2026-11-19, issues #1/#6) — tooling changed, the figures
+> below are NOT yet re-measured.** Decode throughput is now computed from the
+> generated token IDs in the GenAI `EncodedResults` object (tokenized-input
+> `generate()`), over the interval from the first streamer callback to
+> `generate()` return; streamer callback counts are recorded for reference only,
+> since this build's text streamer is not 1:1 with tokens (32 requested → 30
+> callbacks, 128 → 101). NPU evidence is now layered and labeled: requested
+> device, resolved-device query, and plugin libraries mapped in process — the
+> `/proc/self/maps` check proves plugin load, not per-inference NPU execution,
+> and no execution telemetry exists in this build. See the re-run TODO in
+> `benchmarks/benchmark.py`; rows in `results.jsonl` recorded before this change
+> used callback counts as the decode numerator and must not be mixed with new
+> rows in one comparison.
+
 ## Baseline correction
 
 The previous session's "13 tok/s" divided total wall time by token count, folding TTFT
