@@ -43,9 +43,13 @@ Raw labels: the `near-limit-193t` rows are stored as `near-limit-250t@32` / `@12
 **Strict count: 8 of 10 battery tests are token-identical.** `near-limit-193t@128` is
 *not* identical: the NPU produced 127 tokens to the CPU's 128 (`token_comparison`
 `{n: 127, match_pct: 100.0, identical: false}`); the NPU sequence is an exact prefix of
-the CPU sequence. 193 + 127 = 320 = `MAX_PROMPT_LEN` (256) + `MIN_RESPONSE_LEN` (64), so
-this is consistent with the NPUW KV-cache capacity ending generation one token early —
-a hypothesis from the arithmetic, not verified against the plugin source here.
+the CPU sequence. 193 + 127 = 320 = `MAX_PROMPT_LEN` (256) + `MIN_RESPONSE_LEN` (64): the
+NPUW KV-cache window is exactly mpl + mrl tokens (prompt + generated combined), enforced
+by GenAI's per-sequence capacity check (`lm_encoding.cpp:134` with
+`utils.cpp:933`) and by the plugin's own guards (`llm_infer_request.cpp:1505, 1544`);
+the NPU run requested 321 tokens of window — one more than configured — so it stopped
+gracefully at the limit. Source-verified, not just arithmetic: see
+[npu-early-stop-investigation.md](npu-early-stop-investigation.md).
 
 ΔΣlogP = NPU sum-of-top-1-logprobs minus CPU, over the full generation. Magnitudes
 grow with length (−0.19 → −0.38 for 32 → 128 tokens) roughly linearly (~3e-3/token),
