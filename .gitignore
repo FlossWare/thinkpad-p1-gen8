@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local runtime artifacts (never publish)
+logs/
+npuw-cache/
+*.log
+
+# Model artifacts — weights, IR, compiled NPU blobs are not redistributed
+*.xml
+*.bin
+*.blob
+*.onnx
+*.gguf
+*.safetensors
+openvino_model.*
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
