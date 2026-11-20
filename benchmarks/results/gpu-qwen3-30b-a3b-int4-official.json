@@ -1,0 +1,17 @@
+{
+  "ts": "2026-11-20T13:05:00",
+  "model": "OpenVINO/Qwen3-30B-A3B-int4-ov (official, 16 GB IR)",
+  "device": "GPU (Intel(R) Arc(TM) Graphics iGPU)",
+  "harness": "benchmarks/gpu_characterize.py + focused probe (/tmp logs mirrored here because the battery process aborted before writing)",
+  "cases": [
+    {"case": "short@32", "median_ttft_s": 0.156, "median_decode_tok_s": 30.3, "median_wall_s": 1.183, "generated": 32},
+    {"case": "short@128", "median_ttft_s": 0.155, "median_decode_tok_s": 28.1, "median_wall_s": 4.673, "generated": 128},
+    {"case": "medium@32", "median_ttft_s": 0.171, "median_decode_tok_s": 28.6, "median_wall_s": 1.271, "generated": 32},
+    {"case": "medium@128", "median_ttft_s": 0.162, "median_decode_tok_s": 28.5, "median_wall_s": 4.615, "generated": 128},
+    {"case": "long-289t@32", "median_ttft_s": 0.109, "median_decode_tok_s": 29.3, "median_wall_s": 1.166, "generated": 32},
+    {"case": "long-289t@128", "result": "FAILED", "error": "clFinish, error code: -5 CL_OUT_OF_RESOURCES; process aborted (SIGABRT). 16 GB model + ~420-token context workspace exceeds the iGPU shared-memory allocation."}
+  ],
+  "load_s": 15.1,
+  "note": "The focused probe (single short generation) confirmed the same rates: load 16.9 s, TTFT 194 ms. The battery writes results only at completion, so the aborted run's per-case numbers are transcribed from the run log (/tmp/moe-full.log) — medians of 5 repeats for the completed cases.",
+  "conclusion": "Qwen3-30B-A3B runs at ~29 tok/s with ~160 ms TTFT on this iGPU — near the 4B dense model's speed with 30B of knowledge — for prompts up to at least ~300 tokens with modest generations. Long-prompt + long-generation exceeds GPU memory; that combination is the model's ceiling on this machine. Ensemble role: strongest local contributor (500-token deliverable in ~17 s within its context envelope)."
+}

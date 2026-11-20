@@ -556,7 +556,35 @@ GPU path is functional.
 ---
 
 
-**Phase-1 results (measured 2026-11-19).** Pre-flight: GPU PCI `8086:7d51`
+**Phase-2 results (measured 2026-11-20) — the local-model fleet.**
+All OpenVINO INT4 IRs, Arc iGPU, `benchmarks/gpu_characterize.py`
+(raw results in `benchmarks/results/gpu-*.json`):
+
+| Model | Decode | TTFT | ~500-token deliverable | Role |
+|---|---|---|---|---|
+| Qwen3-0.6B | 99–114 tok/s | 33–42 ms | ~5 s | fast triage |
+| Qwen3-1.7B | 54–58 tok/s | ~60 ms | ~9 s | light worker |
+| Qwen3-4B | 22–24 tok/s | ~140 ms | ~22 s | standard worker |
+| Qwen3-8B | 17–18 tok/s | ~190 ms | ~29 s | strong worker |
+| Qwen3-14B | 8.4–8.8 tok/s | ~385 ms | ~60 s | capable worker |
+| **Qwen3-30B-A3B (MoE)** | **28–30 tok/s** | ~160 ms | **~17 s** | **strongest local contributor** |
+
+Key findings: (1) the **MoE inverts the dense trade-off** — 30B of knowledge
+at ~4B speed, load ~15 s; (2) its ceiling is GPU memory: long-prompt +
+long-generation (289+128 tokens) aborts with `CL_OUT_OF_RESOURCES` —
+short/medium prompts up to ~300 tokens work at all tested generation
+lengths (documented, not hidden); (3) dense decode scales ~1/model-size as
+expected; (4) serving: `server.py --device GPU` plus the new
+`POST /v1/messages` Anthropic-shape shim enable these as ensemble
+workers/arbiters for HTTP clients (text-only v1; tool use rejected
+explicitly). Comparison to the cloud ensemble tiers (capability framing,
+not benchmarked): local models lose on raw quality to the gateway/Claude
+models; their ensemble value is decorrelated votes, unlimited volume, and
+zero data egress. Fleet store: `~/.FlossWare/models/llm/` (also Phi-4-mini,
+Mistral-7B, Qwen2.5-Coder-14B, DeepSeek-R1-Distill-14B, Qwen3-Embedding
+downloaded 2026-11-20; untested — benchmark before use).
+
+**Phase-1 results (measured 2026-11-19).****Phase-1 results (measured 2026-11-19).** Pre-flight: GPU PCI `8086:7d51`
 (recorded in hardware/thinkpad-p1-gen8.md), OpenVINO devices `['CPU', 'GPU',
 'NPU']`, GPU full name "Intel(R) Arc(TM) Graphics (iGPU)". Harness:
 `benchmarks/gpu_characterize.py` (token-ID accounting, same rules as the NPU
