@@ -1,0 +1,242 @@
+{
+ "ts": "2026-11-20T13:42:55",
+ "device": "GPU (Intel(R) Arc(TM) Graphics iGPU)",
+ "model_dir": "/home/sfloess/.FlossWare/models/llm/qwen3-coder-30b-a3b-instruct-int4-ov",
+ "load_s": 20.59,
+ "cases": [
+  {
+   "case": "short@32",
+   "prompt_tokens": 5,
+   "median_ttft_s": 0.1471,
+   "median_decode_tok_s": 31.2,
+   "median_wall_s": 1.138,
+   "runs": [
+    {
+     "wall_s": 1.601,
+     "ttft_s": 0.2477,
+     "decode_tok_s": 22.9,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.142,
+     "ttft_s": 0.1471,
+     "decode_tok_s": 31.2,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.133,
+     "ttft_s": 0.1454,
+     "decode_tok_s": 31.4,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.138,
+     "ttft_s": 0.1457,
+     "decode_tok_s": 31.2,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.093,
+     "ttft_s": 0.1495,
+     "decode_tok_s": 32.9,
+     "generated": 32
+    }
+   ]
+  },
+  {
+   "case": "short@128",
+   "prompt_tokens": 5,
+   "median_ttft_s": 0.1353,
+   "median_decode_tok_s": 31.3,
+   "median_wall_s": 4.193,
+   "runs": [
+    {
+     "wall_s": 4.193,
+     "ttft_s": 0.1404,
+     "decode_tok_s": 31.3,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.159,
+     "ttft_s": 0.1357,
+     "decode_tok_s": 31.6,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.216,
+     "ttft_s": 0.1353,
+     "decode_tok_s": 31.1,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.202,
+     "ttft_s": 0.1343,
+     "decode_tok_s": 31.2,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.159,
+     "ttft_s": 0.1343,
+     "decode_tok_s": 31.6,
+     "generated": 128
+    }
+   ]
+  },
+  {
+   "case": "medium@32",
+   "prompt_tokens": 23,
+   "median_ttft_s": 0.1407,
+   "median_decode_tok_s": 33.3,
+   "median_wall_s": 1.072,
+   "runs": [
+    {
+     "wall_s": 1.141,
+     "ttft_s": 0.2114,
+     "decode_tok_s": 33.3,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.078,
+     "ttft_s": 0.1407,
+     "decode_tok_s": 33.1,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.072,
+     "ttft_s": 0.1385,
+     "decode_tok_s": 33.2,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.068,
+     "ttft_s": 0.1407,
+     "decode_tok_s": 33.4,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.065,
+     "ttft_s": 0.139,
+     "decode_tok_s": 33.5,
+     "generated": 32
+    }
+   ]
+  },
+  {
+   "case": "medium@128",
+   "prompt_tokens": 23,
+   "median_ttft_s": 0.1375,
+   "median_decode_tok_s": 31.6,
+   "median_wall_s": 4.167,
+   "runs": [
+    {
+     "wall_s": 4.126,
+     "ttft_s": 0.1365,
+     "decode_tok_s": 31.8,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.132,
+     "ttft_s": 0.1375,
+     "decode_tok_s": 31.8,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.191,
+     "ttft_s": 0.1364,
+     "decode_tok_s": 31.3,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.207,
+     "ttft_s": 0.143,
+     "decode_tok_s": 31.2,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.167,
+     "ttft_s": 0.1438,
+     "decode_tok_s": 31.6,
+     "generated": 128
+    }
+   ]
+  },
+  {
+   "case": "long-289t@32",
+   "prompt_tokens": 289,
+   "median_ttft_s": 0.0997,
+   "median_decode_tok_s": 32.2,
+   "median_wall_s": 1.062,
+   "runs": [
+    {
+     "wall_s": 2.009,
+     "ttft_s": 1.0571,
+     "decode_tok_s": 32.6,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.062,
+     "ttft_s": 0.101,
+     "decode_tok_s": 32.2,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.061,
+     "ttft_s": 0.0997,
+     "decode_tok_s": 32.2,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.064,
+     "ttft_s": 0.0989,
+     "decode_tok_s": 32.1,
+     "generated": 32
+    },
+    {
+     "wall_s": 1.062,
+     "ttft_s": 0.0997,
+     "decode_tok_s": 32.2,
+     "generated": 32
+    }
+   ]
+  },
+  {
+   "case": "long-289t@128",
+   "prompt_tokens": 289,
+   "median_ttft_s": 0.0988,
+   "median_decode_tok_s": 31.1,
+   "median_wall_s": 4.189,
+   "runs": [
+    {
+     "wall_s": 4.241,
+     "ttft_s": 0.1044,
+     "decode_tok_s": 30.7,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.189,
+     "ttft_s": 0.0988,
+     "decode_tok_s": 31.1,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.136,
+     "ttft_s": 0.0983,
+     "decode_tok_s": 31.5,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.158,
+     "ttft_s": 0.099,
+     "decode_tok_s": 31.3,
+     "generated": 128
+    },
+    {
+     "wall_s": 4.212,
+     "ttft_s": 0.0987,
+     "decode_tok_s": 30.9,
+     "generated": 128
+    }
+   ]
+  }
+ ]
+}

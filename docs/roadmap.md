@@ -556,7 +556,31 @@ GPU path is functional.
 ---
 
 
-**Phase-2 results (measured 2026-11-20) — the local-model fleet.**
+**Fleet sweep (2026-11-20, later): all remaining store models tested on the
+Arc iGPU.** 9 of 16 work; every failure has a recorded cause:
+
+| Model | Result |
+|---|---|
+| Mistral-7B-Instruct-v0.3 | ✅ 19.4 tok/s, 178 ms TTFT |
+| Qwen2.5-Coder-7B | ✅ 20.5 tok/s, 171 ms TTFT |
+| **Qwen3-Coder-30B-A3B-Instruct** | ✅ **31.2 tok/s, 147 ms TTFT — the fastest big model on this machine; the local code-review worker** |
+| Qwen3.5-4B / 9B / 3.6-35B-A3B | ❌ `infer_request.cpp:75` — newer-generation Qwen arch not supported by the pinned OV 2026.5 build |
+| gemma-3-4b / 12b, Qwen3-VL-8B, phi-4 | ❌ `num_inputs == 4 \|\| num_inputs == 3` at `pipeline_stateful.cpp:414` — IR input signature (vision/extra inputs) rejected by this GenAI build's stateful pipeline |
+| phi-4-mini | ❌ `CL_OUT_OF_RESOURCES` at first inference |
+| Qwen2.5-Coder-14B, DeepSeek-R1-Distill-14B | ❌ exceeded the 20-minute battery timeout |
+
+Embedding side (CPU, validated): bge-m3 ✅ (1024-dim via sentence-transformers),
+Qwen3-Embedding-0.6B OV IR ✅ (1024-dim via GenAI TextEmbeddingPipeline),
+Qwen3-Embedding-4B converted with tokenizer IRs (re-validation pending),
+nomic-embed-v1.5 ✅ after flattening its revision-nested store directory.
+
+**Operational fleet (works on this laptop today):** Qwen3 0.6B/1.7B/4B/8B/14B,
+30B-A3B, Qwen3-Coder-30B-A3B, Mistral-7B, Qwen2.5-Coder-7B — ten generation
+models — plus the embedding trio. The newer-generation families (Qwen3.5+,
+gemma-3, phi-4, VL) are blocked on the pinned stack; they are the reason to
+revisit the M4 matrix when a future OpenVINO release supports them.
+
+**Phase-2 results (measured 2026-11-20) — the local-model fleet.****Phase-2 results (measured 2026-11-20) — the local-model fleet.**
 All OpenVINO INT4 IRs, Arc iGPU, `benchmarks/gpu_characterize.py`
 (raw results in `benchmarks/results/gpu-*.json`):
 
