@@ -190,12 +190,36 @@ class WorkerStopping(Exception):
     """Raised when a request is submitted to a worker that is shutting down."""
 
 
+def _is_multimodal(model_dir: str) -> bool:
+    """True when the IR is a vision-language export (needs VLMPipeline).
+
+    LLMPipeline fails on multimodal exports with a tensor-port error
+    ("Port for tensor name input_ids was not found"), because those graphs
+    route inputs through the embedding/vision interface.  Detection is by
+    config: an ``image_token_id`` or a ``ForConditionalGeneration``
+    architecture.  Unreadable configs default to the plain LLM path so the
+    error surfaces exactly as it did before.
+    """
+    try:
+        with open(os.path.join(model_dir, 'config.json')) as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if 'image_token_id' in config:
+        return True
+    architectures = config.get('architectures') or []
+    return any(isinstance(a, str) and a.endswith('ForConditionalGeneration')
+               for a in architectures)
+
+
 def _load_pipeline(props: dict, device: str = 'NPU', f32: bool = False):
     """Create the real OpenVINO GenAI pipeline (lazy import of the runtime).
 
     NPU: NPUW properties (MAX_PROMPT_LEN etc.) apply and the KV window is
     bounded (mpl + mrl). GPU: the plain stateful path — NPUW properties are
-    rejected by the plugin — with optional f32 exactness hints.
+    rejected by the plugin — with optional f32 exactness hints.  Multimodal
+    exports (Qwen3.6-35B-A3B, Qwen3-VL, ...) are served text-only through
+    VLMPipeline: LLMPipeline cannot load their graphs at all.
     """
     import openvino_genai as genai
 
@@ -203,6 +227,9 @@ def _load_pipeline(props: dict, device: str = 'NPU', f32: bool = False):
     model_dir = os.environ.get('NPU_MODEL_DIR',
                                f'{ai_root}/models/openvino/qwen3-0.6b-int4')
     if device == 'GPU':
+        if _is_multimodal(model_dir):
+            # f32 exactness hints are untested on the VLM path; leave them off.
+            return genai.VLMPipeline(model_dir, device='GPU')
         gpu_props = {}
         if f32:
             # Exactness mode: both hints are required on this build —
@@ -302,8 +329,11 @@ class Worker:
                     out = self.pipe.generate(item['prompt'],
                                              max_new_tokens=item['max_new_tokens'],
                                              do_sample=False)
+                    # VLMPipeline (multimodal exports served text-only)
+                    # returns VLMDecodedResults, not a plain string.
+                    text = out.texts[0] if getattr(out, 'texts', None) else out
                     item['result'] = {
-                        'text': out,
+                        'text': text,
                         'gen_s': round(time.perf_counter() - t0, 3),
                         'worker': self.id,
                     }

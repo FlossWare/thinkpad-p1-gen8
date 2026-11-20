@@ -574,7 +574,17 @@ Qwen3-Embedding-0.6B OV IR ✅ (1024-dim via GenAI TextEmbeddingPipeline),
 Qwen3-Embedding-4B converted with tokenizer IRs (re-validation pending),
 nomic-embed-v1.5 ✅ after flattening its revision-nested store directory.
 
-**Operational fleet (works on this laptop today):** Qwen3 0.6B/1.7B/4B/8B/14B,
+**Code-model batch (2026-11-20, later):** Qwen2.5-Coder-3B ✅ 40 tok/s
+(official IR; harness input-signature quirk documented in
+`benchmarks/results/code-models-batch.json`); StarCoder2-7B ✅ 11.5 tok/s
+(converted; needed transformers 4.57.1 + standalone openvino-tokenizers for
+the tokenizer IRs); DeepSeek-Coder-V2-Lite ❌ optimum tracing rejects its
+custom MoE code (converter limitation, negative result recorded);
+Qwen3-Embedding-4B ✅ 2560-dim validated. Llama-3.1-8B ✅ 11 tok/s (converted from the ungated
+NousResearch mirror — the meta-llama repo is manually gated; identical
+weights). Full batch record: `benchmarks/results/code-models-batch.json`.
+
+**Operational fleet (works on this laptop today):****Operational fleet (works on this laptop today):** Qwen3 0.6B/1.7B/4B/8B/14B,
 30B-A3B, Qwen3-Coder-30B-A3B, Mistral-7B, Qwen2.5-Coder-7B — ten generation
 models — plus the embedding trio. The newer-generation families (Qwen3.5+,
 gemma-3, phi-4, VL) are blocked on the pinned stack; they are the reason to

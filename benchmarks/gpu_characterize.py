@@ -67,11 +67,17 @@ def main():
                              'ttft_s': round(ttft, 4) if ttft else None,
                              'decode_tok_s': round(dec, 1) if dec else None,
                              'generated': n})
-            med = lambda k: sorted(r[k] for r in runs)[2]  # noqa: E731
+            def med(k):
+                vals = sorted(r[k] for r in runs if r.get(k) is not None)
+                return vals[len(vals) // 2] if vals else None  # noqa: E731
+            prefill = None
+            if med('ttft_s') and len(ids):
+                prefill = round(len(ids) / med('ttft_s'), 1)
             case = {'case': f'{name}@{max_new}', 'prompt_tokens': len(ids),
                     'median_ttft_s': med('ttft_s'),
                     'median_decode_tok_s': med('decode_tok_s'),
-                    'median_wall_s': med('wall_s'), 'runs': runs}
+                    'median_wall_s': med('wall_s'),
+                    'median_prefill_tok_s': prefill, 'runs': runs}
             results['cases'].append(case)
             print(f"[{case['case']}] ttft={case['median_ttft_s']*1000:.0f}ms "
                   f"decode={case['median_decode_tok_s']} tok/s "
