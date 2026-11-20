@@ -120,7 +120,7 @@ Endpoints:
   POST /shutdown        orderly shutdown
 
 Usage:
-  server.py [--port 8931] [--workers 1] [--max-prompt-len 64]
+  server.py [--port 8931] [--workers 1] [--device NPU|GPU] [--f32] [--max-prompt-len 64]
             [--max-queue 32] [--max-sessions 1024] [--drain-timeout 30]
             [--history-limit 1024]
 """
@@ -190,13 +190,27 @@ class WorkerStopping(Exception):
     """Raised when a request is submitted to a worker that is shutting down."""
 
 
-def _load_pipeline(props: dict):
-    """Create the real OpenVINO GenAI pipeline (lazy import of the runtime)."""
+def _load_pipeline(props: dict, device: str = 'NPU', f32: bool = False):
+    """Create the real OpenVINO GenAI pipeline (lazy import of the runtime).
+
+    NPU: NPUW properties (MAX_PROMPT_LEN etc.) apply and the KV window is
+    bounded (mpl + mrl). GPU: the plain stateful path — NPUW properties are
+    rejected by the plugin — with optional f32 exactness hints.
+    """
     import openvino_genai as genai
 
     ai_root = os.environ.get('FLOSSWARE_AI_ROOT', os.path.expanduser('~/AI'))
     model_dir = os.environ.get('NPU_MODEL_DIR',
                                f'{ai_root}/models/openvino/qwen3-0.6b-int4')
+    if device == 'GPU':
+        gpu_props = {}
+        if f32:
+            # Exactness mode: both hints are required on this build —
+            # INFERENCE_PRECISION_HINT alone hits a Paged-Attention
+            # block-size error (see docs/correctness.md / roadmap M2).
+            gpu_props = {'INFERENCE_PRECISION_HINT': 'f32',
+                         'KV_CACHE_PRECISION': 'f32'}
+        return genai.LLMPipeline(model_dir, device='GPU', **gpu_props)
     return genai.LLMPipeline(model_dir, device='NPU', **props)
 
 
@@ -209,14 +223,19 @@ class Worker:
 
     def __init__(self, worker_id: int, max_prompt_len: int,
                  queue_max: int = DEFAULT_MAX_QUEUE,
-                 pipeline_factory=None, token_counter=None):
+                 pipeline_factory=None, token_counter=None,
+                 device: str = 'NPU', f32: bool = False):
         if queue_max < 1:
             raise ValueError('queue_max must be >= 1')
         self.id = worker_id
+        self.device = device
         self.max_prompt_len = max_prompt_len
         # GenAI reads the configured (unaligned) values back from the compiled
         # model, so this is the exact prompt+generated stop boundary (#13).
-        self.kv_capacity = max_prompt_len + MIN_RESPONSE_LEN
+        # GPU: the plain stateful path has NO KV window — capacity is None and
+        # the mpl/capacity request checks are skipped (M3 phase 1).
+        self.kv_capacity = (max_prompt_len + MIN_RESPONSE_LEN
+                            if device == 'NPU' else None)
         self.queue_max = queue_max
         self.q: 'queue.Queue[dict | object]' = queue.Queue(maxsize=queue_max)
         self.requests_done = 0
@@ -227,12 +246,18 @@ class Worker:
         self._in_flight: dict | None = None
 
         t0 = time.perf_counter()
-        props = dict(MAX_PROMPT_LEN=max_prompt_len, MIN_RESPONSE_LEN=MIN_RESPONSE_LEN,
-                     GENERATE_HINT='BEST_PERF')
-        cache = os.environ.get('NPUW_CACHE_DIR')
-        if cache:
-            props['CACHE_DIR'] = cache
-        self.pipe = (pipeline_factory or _load_pipeline)(props)
+        props = {}
+        if device == 'NPU':
+            props = dict(MAX_PROMPT_LEN=max_prompt_len,
+                         MIN_RESPONSE_LEN=MIN_RESPONSE_LEN,
+                         GENERATE_HINT='BEST_PERF')
+            cache = os.environ.get('NPUW_CACHE_DIR')
+            if cache:
+                props['CACHE_DIR'] = cache
+        if pipeline_factory is not None:
+            self.pipe = pipeline_factory(props)
+        else:
+            self.pipe = _load_pipeline(props, device=device, f32=f32)
         self.load_s = time.perf_counter() - t0
         if token_counter is None:
             self.tokenizer = self.pipe.get_tokenizer()
@@ -865,7 +890,8 @@ def make_handler(state: ServerState):
                                               f'{type(e).__name__}: {e}'})
                     return
 
-                if n_tok > state.workers[0].max_prompt_len:
+                if (state.workers[0].device == 'NPU'
+                        and n_tok > state.workers[0].max_prompt_len):
                     self._json(400, {
                         'error': f'prompt_too_long: {n_tok} tokens > MAX_PROMPT_LEN '
                                  f'{state.workers[0].max_prompt_len}; '
@@ -874,7 +900,7 @@ def make_handler(state: ServerState):
                     return
 
                 capacity = state.workers[0].kv_capacity
-                if n_tok + max_new > capacity:
+                if capacity is not None and n_tok + max_new > capacity:
                     # NPUW would stop at capacity - n_tok tokens without any
                     # error (issue #13); refuse instead of truncating silently.
                     self._json(400, {
@@ -1039,6 +1065,13 @@ def main() -> None:
     ap.add_argument('--port', type=int, default=8931)
     ap.add_argument('--workers', type=int, default=1, choices=(1, 2))
     ap.add_argument('--max-prompt-len', type=int, default=MAX_PROMPT_LEN)
+    ap.add_argument('--device', choices=('NPU', 'GPU'), default='NPU',
+                    help='accelerator for the pipeline. GPU uses the plain '
+                         'stateful path (no NPUW properties, no KV window; '
+                         'see docs/serving.md). Default NPU.')
+    ap.add_argument('--f32', action='store_true',
+                    help='GPU only: force f32 inference + KV-cache precision '
+                         '(CPU-identical output; slower than the default f16)')
     ap.add_argument('--history-limit', type=int,
                     default=int(os.environ.get('HISTORY_LIMIT_TOKENS',
                                                HISTORY_LIMIT_TOKENS)),
@@ -1075,7 +1108,8 @@ def main() -> None:
     workers: list[Worker] = []
     for i in range(args.workers):
         t0 = time.perf_counter()
-        workers.append(Worker(i, args.max_prompt_len, queue_max=args.max_queue))
+        workers.append(Worker(i, args.max_prompt_len, queue_max=args.max_queue,
+                              device=args.device, f32=args.f32))
         print(f'[worker {i}] pipeline ready in {time.perf_counter()-t0:.1f}s',
               flush=True)
 

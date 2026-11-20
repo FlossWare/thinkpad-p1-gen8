@@ -695,7 +695,7 @@ class _Pipe:
         time.sleep(float(os.environ.get('STUB_GEN_S', '0')))
         return ' ok'
 
-server._load_pipeline = lambda props: _Pipe()
+server._load_pipeline = lambda props, device='NPU', f32=False: _Pipe()
 sys.argv = ['server.py', '--port', sys.argv[2], '--drain-timeout', '5']
 server.main()
 print('[child] main returned', flush=True)

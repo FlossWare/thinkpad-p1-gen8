@@ -190,6 +190,22 @@ that trade is worth it for your workload. Scale by queueing, not by replicating
 pipelines. Conventional batching is not available for this pipeline type in this
 build and should not be assumed for future builds without re-measurement.
 
+## GPU serving
+
+`serving/server.py --device GPU` runs the same multi-session server on the
+Intel Arc iGPU via the plain stateful path (M3 phase 1):
+
+- **No KV-capacity window**: `kv_capacity` is `null` in `/health` and the
+  `MAX_PROMPT_LEN` / `exceeds_kv_capacity` request checks are skipped — the
+  GPU path is not bucket-bound (only `HISTORY_LIMIT_TOKENS` still bounds
+  sessions). Measured (Qwen3-1.7B INT4): ~56 tok/s decode, ~60 ms TTFT,
+  full-length generations.
+- `--f32` (GPU only) forces `INFERENCE_PRECISION_HINT=f32` +
+  `KV_CACHE_PRECISION=f32` for CPU-identical output (see the M2 correctness
+  notes in the roadmap); both hints are required on this build.
+- Model selection via `NPU_MODEL_DIR` as usual (e.g. the 1.7B/4B IRs in the
+  FlossWare model store).
+
 ## Tests (no NPU required)
 
 ```bash
