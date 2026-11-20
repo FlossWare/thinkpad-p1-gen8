@@ -815,7 +815,158 @@ def make_handler(state: ServerState):
             if path == '/generate':
                 self._handle_generate(payload)
                 return
+            if path == '/v1/messages':
+                self._handle_messages(payload)
+                return
             self._json(404, {'error': 'not_found'})
+
+        # ---- Anthropic Messages-API shim (v1: text-only) ----
+
+        def _handle_messages(self, payload: dict) -> None:
+            """POST /v1/messages — Anthropic Messages API shape (text-only).
+
+            Lets local models act as ensemble workers/arbiters for simple
+            clients (scripts, curl, custom worker harnesses). One server
+            instance serves one model; the request's ``model`` field is
+            accepted as-is. Tool use is NOT supported: requests carrying
+            ``tools`` are rejected with a clear error rather than silently
+            ignored. Each call is self-contained (no session history).
+            """
+            import json as _json
+
+            if payload.get('tools'):
+                self._json(400, {
+                    'type': 'error',
+                    'error': {'type': 'invalid_request_error',
+                              'message': 'tool use is not supported by the '
+                                         'local serving shim (text-only v1)'}})
+                return
+            msgs = payload.get('messages')
+            if not isinstance(msgs, list) or not msgs:
+                self._json(400, {
+                    'type': 'error',
+                    'error': {'type': 'invalid_request_error',
+                              'message': 'messages must be a non-empty list'}})
+                return
+            try:
+                max_tokens = int(payload.get('max_tokens', 1024))
+            except (TypeError, ValueError):
+                self._json(400, {
+                    'type': 'error',
+                    'error': {'type': 'invalid_request_error',
+                              'message': 'max_tokens must be an integer'}})
+                return
+            if not (1 <= max_tokens <= 4096):
+                self._json(400, {
+                    'type': 'error',
+                    'error': {'type': 'invalid_request_error',
+                              'message': 'max_tokens out of range [1, 4096]'}})
+                return
+
+            def _content_text(content):
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    parts = [b.get('text', '') for b in content
+                             if isinstance(b, dict) and b.get('type') == 'text']
+                    return '\n'.join(p for p in parts if p)
+                return ''
+
+            system = payload.get('system') or ''
+            if not isinstance(system, str):
+                system = _content_text(system)
+            prompt_parts = [system] if system else []
+            for m in msgs:
+                role = m.get('role', 'user')
+                text = _content_text(m.get('content', ''))
+                if not text:
+                    continue
+                tag = 'Human' if role == 'user' else 'Assistant'
+                prompt_parts.append(f'{tag}: {text}')
+            prompt_parts.append('Assistant:')
+            full_prompt = '\n\n'.join(prompt_parts)
+
+            n_tok = state.workers[0].count_tokens(full_prompt)
+            if n_tok > HISTORY_LIMIT_TOKENS:
+                self._json(400, {
+                    'type': 'error',
+                    'error': {'type': 'invalid_request_error',
+                              'message': f'prompt_too_long: {n_tok} tokens > '
+                                         f'{HISTORY_LIMIT_TOKENS}'}})
+                return
+
+            stream = bool(payload.get('stream'))
+            req = {'prompt': full_prompt, 'max_new_tokens': max_tokens,
+                   'done': threading.Event(), 'stream': stream,
+                   'chunks': []}
+            try:
+                state.submit(req)
+            except queue.Full:
+                self._json(429, {
+                    'type': 'error',
+                    'error': {'type': 'overloaded_error',
+                              'message': 'all worker queues are full'}})
+                return
+            if not req['done'].wait(timeout=600):
+                self._json(504, {
+                    'type': 'error',
+                    'error': {'type': 'api_error',
+                              'message': 'generation timed out'}})
+                return
+            if 'error' in req:
+                self._json(500, {
+                    'type': 'error',
+                    'error': {'type': 'api_error',
+                              'message': req['error']}})
+                return
+
+            text = req['result']['text']
+            msg_id = f'msg_local_{req["result"].get("worker", 0)}_{int(time.time() * 1000)}'
+            out_tokens = req['result'].get('generated_tokens', len(text) // 4)
+            stop = ('max_tokens' if req['result'].get('generated')
+                    == max_tokens else 'end_turn')
+            if stream:
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+
+                def sse(event, data):
+                    self.wfile.write(
+                        f'event: {event}\ndata: {_json.dumps(data)}\n\n'
+                        .encode())
+
+                sse('message_start', {
+                    'type': 'message_start',
+                    'message': {'id': msg_id, 'type': 'message',
+                                'role': 'assistant',
+                                'model': payload.get('model', 'local'),
+                                'content': [], 'stop_reason': None,
+                                'usage': {'input_tokens': n_tok,
+                                          'output_tokens': 0}}})
+                sse('content_block_start', {
+                    'type': 'content_block_start', 'index': 0,
+                    'content_block': {'type': 'text', 'text': ''}})
+                # coarse deltas: whole text in one delta (v1)
+                sse('content_block_delta', {
+                    'type': 'content_block_delta', 'index': 0,
+                    'delta': {'type': 'text_delta', 'text': text}})
+                sse('content_block_stop', {
+                    'type': 'content_block_stop', 'index': 0})
+                sse('message_delta', {
+                    'type': 'message_delta',
+                    'delta': {'stop_reason': stop, 'stop_sequence': None},
+                    'usage': {'output_tokens': out_tokens}})
+                sse('message_stop', {'type': 'message_stop'})
+            else:
+                self._json(200, {
+                    'id': msg_id, 'type': 'message', 'role': 'assistant',
+                    'model': payload.get('model', 'local'),
+                    'content': [{'type': 'text', 'text': text}],
+                    'stop_reason': stop,
+                    'stop_sequence': None,
+                    'usage': {'input_tokens': n_tok,
+                              'output_tokens': out_tokens}})
 
         def _handle_reset(self, payload: dict) -> None:
             session, err = _validate_session(payload)

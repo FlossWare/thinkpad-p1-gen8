@@ -1126,3 +1126,81 @@ class SessionCapacityTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class MessagesShimTest(unittest.TestCase):
+    """POST /v1/messages — Anthropic Messages API shape (text-only v1)."""
+
+    def test_non_streaming_roundtrip(self):
+        pipe = StubPipeline()
+        h = Harness([pipe])
+        try:
+            code, body = h.post('/v1/messages', {
+                'model': 'local-qwen3',
+                'max_tokens': 32,
+                'system': 'Be terse.',
+                'messages': [
+                    {'role': 'user', 'content': 'What is 2+2?'},
+                    {'role': 'assistant', 'content': '4'},
+                    {'role': 'user', 'content': 'And 2+3?'},
+                ]})
+            self.assertEqual(code, 200)
+            self.assertEqual(body['type'], 'message')
+            self.assertEqual(body['role'], 'assistant')
+            self.assertEqual(body['model'], 'local-qwen3')
+            self.assertEqual(len(body['content']), 1)
+            self.assertEqual(body['content'][0]['type'], 'text')
+            self.assertIn(body['stop_reason'], ('end_turn', 'max_tokens'))
+            self.assertIn('input_tokens', body['usage'])
+            # conversation flattening: system + both roles present
+            self.assertIn('Be terse.', pipe.calls[0])
+            self.assertIn('Human: What is 2+2?', pipe.calls[0])
+            self.assertIn('Assistant: 4', pipe.calls[0])
+            self.assertIn('Human: And 2+3?', pipe.calls[0])
+            self.assertTrue(pipe.calls[0].endswith('Assistant:'))
+        finally:
+            h.close()
+
+    def test_tools_rejected_explicitly(self):
+        pipe = StubPipeline()
+        h = Harness([pipe])
+        try:
+            code, body = h.post('/v1/messages', {
+                'model': 'local', 'max_tokens': 8,
+                'messages': [{'role': 'user', 'content': 'hi'}],
+                'tools': [{'name': 'x', 'input_schema': {}}]})
+            self.assertEqual(code, 400)
+            self.assertEqual(body['type'], 'error')
+            self.assertIn('tool use', body['error']['message'])
+            self.assertEqual(len(pipe.calls), 0)
+        finally:
+            h.close()
+
+    def test_structured_content_blocks_flattened(self):
+        pipe = StubPipeline()
+        h = Harness([pipe])
+        try:
+            code, body = h.post('/v1/messages', {
+                'max_tokens': 8,
+                'messages': [{'role': 'user', 'content': [
+                    {'type': 'text', 'text': 'part one '},
+                    {'type': 'text', 'text': 'part two'},
+                ]}]})
+            self.assertEqual(code, 200)
+            self.assertIn('part one \npart two', pipe.calls[0])
+        finally:
+            h.close()
+
+    def test_invalid_requests(self):
+        pipe = StubPipeline()
+        h = Harness([pipe])
+        try:
+            code, body = h.post('/v1/messages', {'max_tokens': 8})
+            self.assertEqual(code, 400)
+            code, body = h.post('/v1/messages', {
+                'messages': [{'role': 'user', 'content': 'x'}],
+                'max_tokens': 99999})
+            self.assertEqual(code, 400)
+            self.assertEqual(body['error']['type'], 'invalid_request_error')
+        finally:
+            h.close()
