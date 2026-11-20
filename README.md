@@ -26,7 +26,12 @@ Status: complete (2026-11-19). Everything below refers to that project unless no
   [docs/correctness.md](docs/correctness.md)).
 - **Serving prototype**: single persistent pipeline + FIFO queue with request
   isolation, explicit sessions, and graceful shutdown
-  ([serving/](serving/), [docs/serving.md](docs/serving.md)).
+  ([serving/](serving/), [docs/serving.md](docs/serving.md)); runs on NPU or
+  the Arc iGPU (`--device GPU`, optional `--f32` exactness mode) and exposes a
+  text-only Anthropic Messages-API shim at `POST /v1/messages`.
+- **Local-model fleet (measured on the Arc iGPU)**: Qwen3-0.6B through
+  Qwen3-30B-A3B — the 30B-A3B MoE runs at 28–30 tok/s (~4B-dense speed);
+  full table in [docs/roadmap.md](docs/roadmap.md).
 - **Manual static-blob fallback path** (stateful→stateless conversion + static shapes,
   compiled blob) — preserved on the engineering workstation, documented in
   [docs/environment.md](docs/environment.md); not required reading for reproduction.
@@ -180,8 +185,13 @@ the NPU machine and are not part of CI.
 - **Hypotheses, not tested**: behavior on other NPU platforms (Meteor Lake, Lunar
   Lake), other driver versions, larger models. Explicitly untested — do not treat
   as capabilities.
-- **Unsupported/untested configurations**: GPU inference, batched generation,
-  FP8 KV-cache optimization (`NPUW_LLM_OPTIMIZE_FP8`), speculative decoding.
+- **Tested since M3 (2026-11-20)**: GPU (Arc iGPU) inference — the practical
+  host for local models on this machine; see the fleet table in
+  [docs/roadmap.md](docs/roadmap.md) and GPU serving in
+  [docs/serving.md](docs/serving.md).
+- **Unsupported/untested configurations**: batched generation,
+  FP8 KV-cache optimization (`NPUW_LLM_OPTIMIZE_FP8`), speculative decoding,
+  multi-model single-port serving.
 
 ## Known limitations and future work
 
@@ -190,7 +200,7 @@ the NPU machine and are not part of CI.
 - No per-step logits through the GenAI Python API in this build; correctness
   comparisons use greedy token IDs and top-1 logprobs (see
   [docs/correctness.md](docs/correctness.md) for methodology and limits).
-- Future work: GPU (Arc iGPU) inference characterization, embedding models on NPU,
+- Future work: embedding/reranker benchmarks, untested fleet models, ensemble
   additional runtimes, re-testing against OpenVINO/driver releases that address
   the issues linked above.
 - Prioritized post-Project-1 milestones, evidence plans, and backlog:

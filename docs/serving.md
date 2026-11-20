@@ -206,6 +206,27 @@ Intel Arc iGPU via the plain stateful path (M3 phase 1):
 - Model selection via `NPU_MODEL_DIR` as usual (e.g. the 1.7B/4B IRs in the
   FlossWare model store).
 
+## Anthropic Messages-API shim (`POST /v1/messages`)
+
+Text-only v1 of the Anthropic Messages API, for driving local models as
+ensemble workers/arbiters from any HTTP client:
+
+- Request: `model`, `max_tokens` (1–4096), `system`, `messages[]` (string or
+  text-block content), optional `stream` (SSE). The conversation is flattened
+  to `system + Human:/Assistant: turns`; each call is self-contained (no
+  session history).
+- Response (non-streaming): Anthropic message shape with `content` blocks and
+  `usage`; streaming: standard SSE event sequence (message_start through
+  message_stop; v1 emits the full text as one delta).
+- Errors use the Anthropic error envelope: `400 invalid_request_error`
+  (malformed request, `prompt_too_long`), **`400` with an explicit message
+  when `tools` is present — tool use is NOT supported locally and is never
+  silently ignored**, `429 overloaded_error` (queue saturation), `504` on
+  generation timeout.
+- Works on both `--device NPU` and `--device GPU`; one server serves one
+  model (the `model` field is accepted as-is). `claude -p` integration
+  requires tool-use emulation — documented limitation, not attempted in v1.
+
 ## Tests (no NPU required)
 
 ```bash
