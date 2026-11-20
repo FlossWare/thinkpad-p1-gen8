@@ -1,0 +1,26 @@
+[
+ {
+  "model": "bge-m3",
+  "engine": "sentence-transformers",
+  "load_s": 1.7,
+  "dim": 1024,
+  "encode_ms_per_text": 1093.3,
+  "sanity_cos_unrelated": 0.4422,
+  "ok": true
+ },
+ {
+  "model": "nomic-embed-text-v1.5",
+  "ok": false,
+  "error": "ValueError: Unrecognized model in /home/sfloess/.FlossWare/models/embeddings/nomic-ai/nomic-embed-text-v1.5. Should have a `model_type` key in its config.json."
+ },
+ {
+  "model": "Qwen3-Embedding-0.6B-int8-ov",
+  "ok": false,
+  "error": "AttributeError: 'list' object has no attribute 'embeddings'"
+ },
+ {
+  "model": "Qwen3-Embedding-4B-int4-ov (converted)",
+  "ok": false,
+  "error": "RuntimeError: Check 'm_ireq_queue_tokenizer' failed at src/cpp/src/tokenizer/tokenizer_impl.cpp:730:\nEither openvino_tokenizer.xml was not provided or it was not lo"
+ }
+]
