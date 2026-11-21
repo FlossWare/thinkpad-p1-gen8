@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "task_type": "code_review",
+  "prompt_template": "Review this Python function for bugs. Identify any defect: its class, the exact line, and why it is wrong. If there are no bugs, say so.\n\n```python\n{code}\n```",
+  "fixtures": [
+    {"file": "off_by_one_001.py", "defect_class": "off_by_one", "match_terms": ["range", "skip", "first", "index 0", "items[0]"], "weight": 1.0},
+    {"file": "null_deref_001.py", "defect_class": "null_dereference", "match_terms": ["none", "null", "dereference", "before", "check"], "weight": 1.0},
+    {"file": "race_001.py", "defect_class": "race_condition", "match_terms": ["race", "thread", "concurrent", "toctou", "check-then-act", "atomic"], "weight": 1.0},
+    {"file": "sql_injection_001.py", "defect_class": "sql_injection", "match_terms": ["injection", "concatenat", "parameterized", "sql"], "weight": 1.0},
+    {"file": "resource_leak_001.py", "defect_class": "resource_leak", "match_terms": ["leak", "close", "with", "context manager", "exception"], "weight": 1.0},
+    {"file": "inverted_condition_001.py", "defect_class": "inverted_condition", "match_terms": ["inverted", "not", "condition", "logic", "wrong"], "weight": 1.0},
+    {"file": "mutable_default_001.py", "defect_class": "mutable_default_argument", "match_terms": ["mutable", "default", "shared", "persist", "accumulate"], "weight": 1.0},
+    {"file": "except_swallow_001.py", "defect_class": "exception_swallowing", "match_terms": ["bare except", "swallow", "silently", "catch", "keyboardinterrupt"], "weight": 1.0},
+    {"file": "deadlock_001.py", "defect_class": "deadlock", "match_terms": ["deadlock", "lock order", "ordering", "acquire"], "weight": 1.0},
+    {"file": "unbounded_recursion_001.py", "defect_class": "unbounded_recursion", "match_terms": ["recursion", "base case", "terminat", "stack"], "weight": 1.0},
+    {"file": "type_confusion_001.py", "defect_class": "type_confusion", "match_terms": ["string", "int", "type", "comparison", "always false"], "weight": 1.0}
+  ]
+}

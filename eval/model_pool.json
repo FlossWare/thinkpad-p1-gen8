@@ -1,0 +1,23 @@
+{
+  "local": [
+    {"name": "qwen3-0.6b", "kind": "local", "endpoint": "http://127.0.0.1:8961"},
+    {"name": "qwen3-1.7b", "kind": "local", "endpoint": "http://127.0.0.1:8962"},
+    {"name": "qwen2.5-coder-3b", "kind": "local", "endpoint": "http://127.0.0.1:8963"},
+    {"name": "qwen3-4b", "kind": "local", "endpoint": "http://127.0.0.1:8964"},
+    {"name": "qwen2.5-coder-7b", "kind": "local", "endpoint": "http://127.0.0.1:8965"},
+    {"name": "mistral-7b", "kind": "local", "endpoint": "http://127.0.0.1:8966"},
+    {"name": "qwen3-8b", "kind": "local", "endpoint": "http://127.0.0.1:8967"},
+    {"name": "llama-3.1-8b", "kind": "local", "endpoint": "http://127.0.0.1:8968"},
+    {"name": "starcoder2-7b", "kind": "local", "endpoint": "http://127.0.0.1:8969"},
+    {"name": "deepseek-r1-14b", "kind": "local", "endpoint": "http://127.0.0.1:8970"},
+    {"name": "qwen3-14b", "kind": "local", "endpoint": "http://127.0.0.1:8971"},
+    {"name": "qwen3-30b-a3b", "kind": "local", "endpoint": "http://127.0.0.1:8972"},
+    {"name": "qwen3-coder-30b-a3b", "kind": "local", "endpoint": "http://127.0.0.1:8973"},
+    {"name": "qwen3-0.6b-npu", "kind": "local", "endpoint": "http://127.0.0.1:8974"}
+  ],
+  "gateway": [
+    {"name": "glm-5.3", "kind": "gateway", "model_id": "rits/zai-org/glm-5-3"},
+    {"name": "deepseek-v4.1-flash", "kind": "gateway", "model_id": "rits/deepseek-ai/DeepSeek-V4.1-Flash-1017"},
+    {"name": "muse-spark-open", "kind": "gateway", "model_id": "rits/meta-models/Muse-Spark-Open-816B-A42B-NVFP4"}
+  ]
+}
