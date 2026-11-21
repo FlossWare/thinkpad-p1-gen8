@@ -46,7 +46,7 @@ for M in "${MODELS[@]}"; do
   done
 
   if [ "$READY" = 1 ]; then
-    python3 eval/run_eval.py --local-only --out "$OUT" \
+    python3 eval/run_eval.py --feed --local-only --out "$OUT" \
       --models <(echo "{\"local\": [{\"name\": \"$M\", \"kind\": \"local\", \"endpoint\": \"http://127.0.0.1:$PORT\"}]}") \
       || echo "EVAL FAILED for $M"
   else
@@ -60,7 +60,7 @@ done
 
 if [ "${1:-}" = "--gateway-too" ]; then
   echo "=== gateway (free) models ==="
-  python3 eval/run_eval.py --gateway-only --out "$OUT"
+  python3 eval/run_eval.py --feed --gateway-only --out "$OUT"
 fi
 
 echo "=== ALL DONE — outcomes in $OUT ==="

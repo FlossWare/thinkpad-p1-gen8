@@ -68,6 +68,29 @@ def call_gateway(model_id, prompt, timeout=300):
     return proc.stdout, time.perf_counter() - t0
 
 
+def feed_thompson(rec):
+    """POST one outcome to the live Thompson service (loopback only).
+
+    Contract (source-verified): POST /thompson with action=record_outcome,
+    fields model/task_type/success/cost/tokens. Failures to feed are
+    reported but never abort the sweep — the JSONL record is always the
+    durable source of truth.
+    """
+    body = json.dumps({'action': 'record_outcome',
+                       'model': rec['model'],
+                       'task_type': rec['task_type'],
+                       'success': bool(rec.get('caught')),
+                       'cost': rec.get('cost_usd', 0.0),
+                       'tokens': 0}).encode()
+    req = urllib.request.Request('http://127.0.0.1:8769/thompson', data=body,
+                                 headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read()).get('ok', False)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def score_review(review_text, fixture):
     """Computed scoring against ground truth. No model rates a model.
 
@@ -90,6 +113,9 @@ def main():
     ap.add_argument('--out', default=os.path.join(HERE, 'results',
                                                   'outcomes.jsonl'))
     ap.add_argument('--models', default=os.path.join(HERE, 'model_pool.json'))
+    ap.add_argument('--feed', action='store_true',
+                    help='POST each outcome to the live Thompson service '
+                         '(127.0.0.1:8769) as it is computed')
     ap.add_argument('--local-only', action='store_true')
     ap.add_argument('--gateway-only', action='store_true')
     args = ap.parse_args()
@@ -136,8 +162,11 @@ def main():
                 summary[name]['failed'] += 1
             summary[name]['total_lat'] += rec.get('latency_s', 0)
             outcomes.append(rec)
+            if args.feed and rec['status'] == 'ok':
+                rec['fed'] = feed_thompson(rec)
             print(f"[{name}] {fx['file']}: "
-                  f"{'CAUGHT' if rec.get('caught') else rec['status']}", flush=True)
+                  f"{'CAUGHT' if rec.get('caught') else rec['status']}"
+                  f"{' (fed)' if rec.get('fed') else ''}", flush=True)
 
     with open(args.out, 'a') as f:
         for rec in outcomes:
