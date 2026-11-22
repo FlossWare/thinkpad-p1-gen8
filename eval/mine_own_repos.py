@@ -32,10 +32,11 @@ import subprocess
 import sys
 
 FIX_RE = re.compile(
-    r'\b(bug|broke|broken|incorrect|wrong|regression|crash|null|npe|'
+    r'\b(fix\w*|bug|broke|broken|incorrect|wrong|regression|crash|null|npe|'
     r'off[- ]by[- ]one|race|deadlock|leak|overflow|revert|typo)\b', re.I)
 DOC_RE = re.compile(r'\.(md|rst|txt|json|ya?ml|toml|cfg|conf|ini|properties)$')
-SRC_RE = re.compile(r'\.(py|java|rb|go|rs|c|h|cpp|js|ts|sh|groovy|kt|scala)$')
+SRC_RE = re.compile(
+    r'\.(py|java|rb|go|rs|c|h|cpp|js|ts|sh|groovy|kt|scala|yml|yaml)$')
 
 STOPWORDS = set('''a an and are as at be been but by code commit config data did
 do does doesn fix fixes fixed for from had has have how if in into is it its
