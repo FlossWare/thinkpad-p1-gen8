@@ -65,7 +65,15 @@ def call_gateway(model_id, prompt, timeout=300):
     proc = subprocess.run(
         ['claude', '-p', '--model', model_id, prompt],
         capture_output=True, text=True, timeout=timeout)
-    return proc.stdout, time.perf_counter() - t0
+    out = proc.stdout
+    # The CLI exits 0 with an error message on stdout for models it cannot
+    # invoke through the Anthropic-protocol path. Detect and raise instead of
+    # scoring the error text as a review (the 2026-11-21 paid-sweep lesson).
+    if ('issue with the selected model' in out
+            or 'unrecognized_model' in out
+            or "doesn't recognize the model" in out):
+        raise RuntimeError(f'claude CLI cannot invoke model {model_id}')
+    return out, time.perf_counter() - t0
 
 
 def feed_thompson(rec):
@@ -101,6 +109,40 @@ def call_ollama(model_name, prompt, timeout=300):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.loads(r.read())
     return d.get('message', {}).get('content', ''), time.perf_counter() - t0
+
+
+def call_openai_gateway(model_id, prompt, timeout=300):
+    """Direct HTTP to the gateway's OpenAI-compatible endpoint.
+
+    Needed for GPT/Gemini families: `claude -p` (Anthropic protocol) cannot
+    invoke them. GPT-5+ requires max_completion_tokens (rejects max_tokens);
+    reasoning models (gemini) burn the budget on hidden reasoning, so use a
+    generous limit. Retries once on the parameter error and on empty content.
+    """
+    body = json.dumps({'model': model_id, 'messages': [
+        {'role': 'user', 'content': prompt}],
+        'max_completion_tokens': 2048}).encode()
+    for attempt in range(2):
+        req = urllib.request.Request(
+            'https://api.enmaas.devshift.net/v1/chat/completions', data=body,
+            headers={'Content-Type': 'application/json',
+                     'Authorization': 'Bearer ' + os.environ.get(
+                         'ANTHROPIC_API_KEY', '')})
+        t0 = time.perf_counter()
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read())
+        lat = time.perf_counter() - t0
+        choices = d.get('choices') or [{}]
+        msg = choices[0].get('message') or {}
+        content = msg.get('content') or ''
+        if content.strip():
+            return content, lat
+        # empty content: reasoning burn or parameter issue -> retry with
+        # the alternate parameter name and double budget
+        body = json.dumps({'model': model_id, 'messages': [
+            {'role': 'user', 'content': prompt}],
+            'max_tokens': 4096}).encode()
+    return '', lat
 
 
 def score_review(review_text, fixture):
@@ -142,6 +184,7 @@ def main():
     if not args.local_only:
         models += [m for m in pool.get('gateway', [])]
     models += [m for m in pool.get('ollama', [])]
+    models += [m for m in pool.get('openai-gateway', [])]
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     outcomes = []
@@ -165,6 +208,10 @@ def main():
                 elif model['kind'] == 'ollama':
                     text, lat = call_ollama(model['model_id'], prompt)
                     cost = 0.0
+                elif model['kind'] == 'openai-gateway':
+                    text, lat = call_openai_gateway(model['model_id'], prompt)
+                    cost = 0.0  # budget-drawing; recorded from response usage
+
                 else:
                     text, lat = call_gateway(model['model_id'], prompt)
                     cost = 0.0  # free tier — no budget draw

@@ -1,0 +1,52 @@
+{
+ "ts": "2026-11-21T21:00:00",
+ "purpose": "Paid-tier sweep results + the protocol-route discovery",
+ "route_finding": {
+  "claude_cli": "Anthropic-protocol CLI reaches ONLY Claude + rits/* free trio; GPT/Gemini return 'issue with the selected model' with exit 0 (driver initially mis-scored these as reviews \u2014 fixed with error detection)",
+  "openai_endpoint": "/v1/chat/completions reaches GPT + Gemini families. GPT-5+ requires max_completion_tokens (rejects max_tokens); reasoning models burn budget on hidden reasoning (gemini burned 47 of 50 tokens) \u2014 2048+ limit needed",
+  "responses_endpoint": "gpt-5.3-codex requires /v1/responses instead; gemini-3.1-pro (preview) unreachable"
+ },
+ "results": [
+  {
+   "model": "gpt-5.5",
+   "catch_rate": "11/11",
+   "avg_lat_s": 6.2
+  },
+  {
+   "model": "gpt-6-astra",
+   "catch_rate": "11/11",
+   "avg_lat_s": 5.1
+  },
+  {
+   "model": "gpt-5.4-nano",
+   "catch_rate": "11/11",
+   "avg_lat_s": 2.1
+  },
+  {
+   "model": "gpt-4o-mini",
+   "catch_rate": "11/11",
+   "avg_lat_s": 3.6
+  },
+  {
+   "model": "gemini-3.8-flash",
+   "catch_rate": "11/11",
+   "avg_lat_s": 4.9
+  },
+  {
+   "model": "gemini-4-neon",
+   "catch_rate": "11/11",
+   "avg_lat_s": 9.1
+  },
+  {
+   "model": "gpt-5.3-codex",
+   "catch_rate": "0/11",
+   "note": "requires /v1/responses endpoint \u2014 not chat-completions compatible"
+  },
+  {
+   "model": "gemini-3.1-pro",
+   "catch_rate": "0/11",
+   "note": "preview tier, no response from endpoint"
+  }
+ ],
+ "contamination_note": "The FIRST paid sweep (88 outcomes) scored CLI error text as reviews \u2014 all 8 models 0/11 status=ok. Those fed Thompson as false failures. The corrected sweep results above are accurate; the earlier 88 records remain in the ledger as history. Paid-model Thompson arms carry ~11 spurious failures each until outweighed by future outcomes."
+}
