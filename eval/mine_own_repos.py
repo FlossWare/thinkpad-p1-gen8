@@ -54,12 +54,14 @@ def git(repo, *args):
 
 
 def commits(repo, since):
-    """Yield (sha, ts, subject) newest-first."""
+    """Yield (sha, ts, subject) newest-first; skip malformed lines."""
     out = git(repo, 'log', '--no-merges', f'--since={since}',
               '--format=%H%x09%ct%x09%s')
     for line in out.splitlines():
-        sha, ts, subj = line.split('\t', 2)
-        yield sha, int(ts), subj
+        parts = line.split('\t', 2)
+        if len(parts) != 3 or not parts[0] or not parts[1].isdigit():
+            continue
+        yield parts[0], int(parts[1]), parts[2]
 
 
 def files_of(repo, sha):
@@ -95,12 +97,19 @@ def changed_lines(repo, sha):
 def mine(repo, since='24 months ago', max_fixtures=40):
     """Return fixture dicts for one repo."""
     cs = list(commits(repo, since))
-    info = {sha: (ts, subj, set(files_of(repo, sha))) for sha, ts, subj in cs}
+    info = {}
+    for sha, ts, subj in cs:
+        try:
+            info[sha] = (ts, subj, set(files_of(repo, sha)))
+        except Exception:  # noqa: BLE001 — one unreadable commit must not
+            continue       # lose the repo's partial results
     order = {sha: i for i, (sha, _, _) in enumerate(cs)}  # 0 = newest
     used_fixes = set()  # one fix commit labels at most ONE fixture
 
     fixtures = []
     for sha, ts, subj in cs:
+        if sha not in info:
+            continue
         _, _, afiles = info[sha]
         src = [f for f in afiles if SRC_RE.search(f)]
         if not src or DOC_RE.match(subj.split()[-1] if subj else ''):
@@ -114,8 +123,12 @@ def mine(repo, since='24 months ago', max_fixtures=40):
             if order[bsha] >= order[sha]:
                 continue  # older-or-equal in list == not after A
             if bts - ts > 14 * 86400:
-                break  # cs is newest-first; everything older is too far
-            if bsha in used_fixes or not FIX_RE.search(bsubj):
+                # cs is newest-first, so bts-ts DECREASES as we iterate:
+                # skip too-recent-to-A entries, don't break -- the closer
+                # (older) candidates are further down the list
+                continue
+            if bsha in used_fixes or bsha not in info \
+                    or not FIX_RE.search(bsubj):
                 continue
             shared = info[bsha][2] & set(src)
             if len(shared) < 2 and len(shared) < len(info[bsha][2]) / 2:

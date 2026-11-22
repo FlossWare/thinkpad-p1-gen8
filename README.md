@@ -11,6 +11,35 @@ including the failures and workarounds.
 **Project 1: Intel NPU inference with OpenVINO GenAI NPUW and Qwen3-0.6B INT4.**
 Status: complete (2026-11-19). Everything below refers to that project unless noted.
 
+**Project 2: fully-automated model measurement campaign** (`eval/`).
+Status: complete (2026-11-22). Every reachable model tier — 13 local OpenVINO
+models, 10 ollama models, 3 free gateway models, 3 Claude models, 28 paid
+gateway models — was measured on the same 11 seeded-defect code-review
+fixtures with computed scoring (term-match against ground truth; no arbiter,
+no human in the loop), recording ~4,600 outcomes to a live Thompson-sampling
+service. Findings: classic-defect capability is saturated (nearly everything
+from 0.6B up scores 11/11); the real routing signal is time-budget failures
+of small thinking models, runtime choice (same weights: 3/11 as an OpenVINO
+IR vs 11/11 through ollama), and economics (qwen3-coder-30b-a3b matches
+premium-model catch rate at ~9 s and $0 per request). All raw outcomes:
+[`eval/results/outcomes.jsonl`](eval/results/outcomes.jsonl).
+
+One hardware-relevant result: **stock ollama builds are CUDA/ROCm-only and
+cannot use the Arc iGPU** — everything silently runs on CPU until ollama
+0.40.17 (Vulkan backend) is installed as a full binary+runner tree with
+`OLLAMA_VULKAN=1` and `OLLAMA_IGPU_ENABLE=1`. Verified by journal
+`offloaded N/M layers to GPU` lines (37/37 for qwen3:4b, ~13 s/response vs
+5-minute CPU timeouts). `eval/rerun_ollama_gpu.sh` refuses to run unless
+GPU offload is evidenced in the journal.
+
+`eval/` also contains fixture miners that turn real code history into
+evaluation fixtures: `mine_own_repos.py` (git-log mining: a small
+defect-named follow-up commit labels the change a reviewer should have
+caught; aged untouched changes are clean false-positive baselines) and
+`mine_public_github.py` (human review comments on merged PRs in public
+repos as labeled findings). Mined fixtures live under the local data store,
+not in this repository.
+
 > All numbers on this page are measurements from **one specific machine** (see
 > [hardware/thinkpad-p1-gen8.md](hardware/thinkpad-p1-gen8.md)). They are not claims
 > about Intel NPU performance in general.
@@ -154,6 +183,7 @@ Two runtime gotchas discovered during the project (both bite silently):
 | [benchmarks/](benchmarks/) | `benchmark.py` + raw results (`results/results.jsonl`) |
 | [validation/](validation/) | `validate.py` + raw results (`results/validation-results.json`) |
 | [serving/](serving/) | multi-session serving prototype + benchmark client + raw results |
+| [eval/](eval/) | model measurement campaign: fixtures, eval driver, sweeps, fixture miners, outcome ledger |
 | [hardware/](hardware/) | platform notes for the ThinkPad P1 Gen 8 |
 
 ## Tests and CI

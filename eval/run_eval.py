@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -65,6 +66,10 @@ def call_gateway(model_id, prompt, timeout=300):
     proc = subprocess.run(
         ['claude', '-p', '--model', model_id, prompt],
         capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f'claude CLI exited {proc.returncode} for {model_id}: '
+            f'{proc.stderr.strip()[:120]}')
     out = proc.stdout
     # The CLI exits 0 with an error message on stdout for models it cannot
     # invoke through the Anthropic-protocol path. Detect and raise instead of
@@ -108,7 +113,13 @@ def call_ollama(model_name, prompt, timeout=300):
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.loads(r.read())
-    return d.get('message', {}).get('content', ''), time.perf_counter() - t0
+    if 'error' in d:
+        raise RuntimeError(f'ollama error for {model_name}: '
+                           f'{str(d["error"])[:120]}')
+    content = (d.get('message') or {}).get('content') or ''
+    if not content.strip():
+        raise RuntimeError(f'ollama returned empty content for {model_name}')
+    return content, time.perf_counter() - t0
 
 
 def call_openai_gateway(model_id, prompt, timeout=300):
@@ -117,11 +128,14 @@ def call_openai_gateway(model_id, prompt, timeout=300):
     Needed for GPT/Gemini families: `claude -p` (Anthropic protocol) cannot
     invoke them. GPT-5+ requires max_completion_tokens (rejects max_tokens);
     reasoning models (gemini) burn the budget on hidden reasoning, so use a
-    generous limit. Retries once on the parameter error and on empty content.
+    generous limit. Retries once with the alternate parameter name on a
+    parameter-rejection HTTP error, and once more on empty content; raises
+    if both attempts yield no usable content.
     """
     body = json.dumps({'model': model_id, 'messages': [
         {'role': 'user', 'content': prompt}],
         'max_completion_tokens': 2048}).encode()
+    lat = 0.0
     for attempt in range(2):
         req = urllib.request.Request(
             'https://api.enmaas.devshift.net/v1/chat/completions', data=body,
@@ -129,20 +143,30 @@ def call_openai_gateway(model_id, prompt, timeout=300):
                      'Authorization': 'Bearer ' + os.environ.get(
                          'ANTHROPIC_API_KEY', '')})
         t0 = time.perf_counter()
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.loads(r.read())
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                d = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if attempt == 0 and e.code == 400:
+                # parameter rejection: retry with max_tokens instead
+                body = json.dumps({'model': model_id, 'messages': [
+                    {'role': 'user', 'content': prompt}],
+                    'max_tokens': 4096}).encode()
+                continue
+            raise
         lat = time.perf_counter() - t0
         choices = d.get('choices') or [{}]
         msg = choices[0].get('message') or {}
         content = msg.get('content') or ''
         if content.strip():
             return content, lat
-        # empty content: reasoning burn or parameter issue -> retry with
-        # the alternate parameter name and double budget
+        # empty content (reasoning burn): retry once with double budget
         body = json.dumps({'model': model_id, 'messages': [
             {'role': 'user', 'content': prompt}],
             'max_tokens': 4096}).encode()
-    return '', lat
+    raise RuntimeError(
+        f'openai-gateway model {model_id} returned no usable content '
+        f'after {attempt + 1} attempts')
 
 
 def score_review(review_text, fixture):

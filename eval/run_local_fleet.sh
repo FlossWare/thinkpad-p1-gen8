@@ -13,6 +13,16 @@ source scripts/env.sh
 PORT=${EVAL_PORT:-8991}
 OUT=eval/results/outcomes.jsonl
 mkdir -p eval/results
+FAILED=0
+
+# cleanup + signal handling: bash resumes the script after a trap handler
+# unless the handler exits, so INT/TERM must exit explicitly (otherwise
+# Ctrl-C records a bogus failure and starts the NEXT model's server).
+cleanup() { [ -n "$SRV" ] && kill -TERM "$SRV" 2>/dev/null; }
+SRV=""
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 MODELS=(
   qwen3-0.6b-int4-official
@@ -36,9 +46,11 @@ for M in "${MODELS[@]}"; do
     python3 serving/server.py --device GPU --port "$PORT" > "eval/results/server-$M.log" 2>&1 &
   SRV=$!
 
-  # wait for health (up to 120s — big models load slowly)
+  # wait for health (up to 120s — big models load slowly), bailing out
+  # early if the server process dies (crash at startup, port already held)
   READY=0
   for _ in $(seq 1 120); do
+    kill -0 $SRV 2>/dev/null || break
     if curl -s -m 2 "http://127.0.0.1:$PORT/health" | grep -q '"ok": *true'; then
       READY=1; break
     fi
@@ -48,19 +60,32 @@ for M in "${MODELS[@]}"; do
   if [ "$READY" = 1 ]; then
     python3 eval/run_eval.py --feed --local-only --out "$OUT" \
       --models <(echo "{\"local\": [{\"name\": \"$M\", \"kind\": \"local\", \"endpoint\": \"http://127.0.0.1:$PORT\"}]}") \
-      || echo "EVAL FAILED for $M"
+      || { echo "EVAL FAILED for $M"
+           echo "{\"ts\": \"$(date -Is)\", \"model\": \"$M\", \"status\": \"eval_failed\"}" >> "$OUT"
+           FAILED=1; }
   else
     echo "SERVER FAILED to become healthy: $M (see eval/results/server-$M.log)"
     echo "{\"ts\": \"$(date -Is)\", \"model\": \"$M\", \"status\": \"server_failed\"}" >> "$OUT"
+    FAILED=1
   fi
 
   kill -TERM $SRV 2>/dev/null
+  # escalate to SIGKILL if the server stalls on TERM (a hung wait would
+  # block the whole fleet run)
+  for _ in $(seq 1 10); do
+    kill -0 $SRV 2>/dev/null || break
+    sleep 1
+  done
+  kill -9 $SRV 2>/dev/null
   wait $SRV 2>/dev/null
+  SRV=""
 done
 
 if [ "${1:-}" = "--gateway-too" ]; then
   echo "=== gateway (free) models ==="
-  python3 eval/run_eval.py --feed --gateway-only --out "$OUT"
+  python3 eval/run_eval.py --feed --gateway-only --out "$OUT" \
+    || { echo "GATEWAY EVAL FAILED" >&2; FAILED=1; }
 fi
 
 echo "=== ALL DONE — outcomes in $OUT ==="
+exit $FAILED
