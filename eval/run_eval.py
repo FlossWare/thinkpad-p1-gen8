@@ -91,6 +91,18 @@ def feed_thompson(rec):
         return False
 
 
+def call_ollama(model_name, prompt, timeout=300):
+    """POST /api/chat to the local ollama service (single port, model per request)."""
+    body = json.dumps({'model': model_name, 'stream': False,
+                       'messages': [{'role': 'user', 'content': prompt}]}).encode()
+    req = urllib.request.Request('http://127.0.0.1:11434/api/chat', data=body,
+                                 headers={'Content-Type': 'application/json'})
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        d = json.loads(r.read())
+    return d.get('message', {}).get('content', ''), time.perf_counter() - t0
+
+
 def score_review(review_text, fixture):
     """Computed scoring against ground truth. No model rates a model.
 
@@ -129,6 +141,7 @@ def main():
         models += [m for m in pool.get('local', [])]
     if not args.local_only:
         models += [m for m in pool.get('gateway', [])]
+    models += [m for m in pool.get('ollama', [])]
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     outcomes = []
@@ -148,6 +161,9 @@ def main():
             try:
                 if model['kind'] == 'local':
                     text, lat = call_local(model['endpoint'], prompt)
+                    cost = 0.0
+                elif model['kind'] == 'ollama':
+                    text, lat = call_ollama(model['model_id'], prompt)
                     cost = 0.0
                 else:
                     text, lat = call_gateway(model['model_id'], prompt)
