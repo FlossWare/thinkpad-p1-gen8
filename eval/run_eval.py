@@ -38,13 +38,19 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def load_manifest():
-    with open(os.path.join(HERE, 'fixture_manifest.json')) as f:
-        return json.load(f)
+def load_manifest(path):
+    with open(path) as f:
+        m = json.load(f)
+    # mined manifests live in the data store and carry their own
+    # fixtures_dir; the built-in manifest uses the repo's fixtures/
+    if 'fixtures_dir' not in m:
+        m['fixtures_dir'] = os.path.join(HERE, 'fixtures')
+    m['fixtures_dir'] = os.path.expanduser(m['fixtures_dir'])
+    return m
 
 
-def load_fixture(manifest_entry):
-    with open(os.path.join(HERE, 'fixtures', manifest_entry['file'])) as f:
+def load_fixture(manifest_entry, fixtures_dir):
+    with open(os.path.join(fixtures_dir, manifest_entry['file'])) as f:
         return f.read()
 
 
@@ -57,20 +63,31 @@ def call_local(endpoint, prompt, timeout=300):
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.loads(r.read())
-    return d['content'][0]['text'], time.perf_counter() - t0
+    if d.get('type') == 'error' or 'error' in d:
+        raise RuntimeError(f'local server error: {str(d)[:120]}')
+    content = ((d.get('content') or [{}])[0] or {}).get('text') or ''
+    if not content.strip():
+        raise RuntimeError('local server returned empty content')
+    return content, time.perf_counter() - t0
 
 
 def call_gateway(model_id, prompt, timeout=300):
     """Free gateway model via the authenticated claude CLI."""
     t0 = time.perf_counter()
-    proc = subprocess.run(
-        ['claude', '-p', '--model', model_id, prompt],
-        capture_output=True, text=True, timeout=timeout)
+    try:
+        # prompt on stdin: argv has a ~128KiB E2BIG limit on Linux
+        proc = subprocess.run(
+            ['claude', '-p', '--model', model_id],
+            input=prompt, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f'claude CLI timed out for {model_id}') from e
     if proc.returncode != 0:
         raise RuntimeError(
             f'claude CLI exited {proc.returncode} for {model_id}: '
             f'{proc.stderr.strip()[:120]}')
     out = proc.stdout
+    if not out.strip():
+        raise RuntimeError(f'claude CLI returned empty output for {model_id}')
     # The CLI exits 0 with an error message on stdout for models it cannot
     # invoke through the Anthropic-protocol path. Detect and raise instead of
     # scoring the error text as a review (the 2026-11-21 paid-sweep lesson).
@@ -94,7 +111,7 @@ def feed_thompson(rec):
                        'task_type': rec['task_type'],
                        'success': bool(rec.get('caught')),
                        'cost': rec.get('cost_usd', 0.0),
-                       'tokens': 0}).encode()
+                       'tokens': rec.get('tokens', 0)}).encode()
     req = urllib.request.Request('http://127.0.0.1:8769/thompson', data=body,
                                  headers={'Content-Type': 'application/json'})
     try:
@@ -169,18 +186,42 @@ def call_openai_gateway(model_id, prompt, timeout=300):
         f'after {attempt + 1} attempts')
 
 
+# clear bug-assertion language for clean-fixture false-positive scoring
+# (conservative: hedges, questions, and "handles X correctly" do not count)
+DEFECT_ASSERT_RE = re.compile(
+    r'\b(is a bug|bug (in|here)|defect|incorrect|off[- ]by[- ]one|'
+    r'race condition|deadlock|memory leak|resource leak|null (pointer|'
+    r'dereference)|will (fail|crash|break|throw)|can (fail|crash|break)|'
+    r'missing check|unhandled (exception|error|case))\b', re.I)
+
+
 def score_review(review_text, fixture):
     """Computed scoring against ground truth. No model rates a model.
 
-    caught: at least half the fixture's match_terms appear in the review
-    (case-insensitive), AND the review does not declare the code clean.
-    clean_claim: review asserts there are no bugs (a miss).
+    Defect fixtures (default): at least half the fixture's match_terms
+    appear in the review (case-insensitive), AND the review does not
+    declare the code clean.
+
+    Clean fixtures (class=clean, no match_terms): the code is known-good,
+    so SUCCESS is the inverse -- the review must not assert a defect.
+    A clean claim passes outright; a review with no clean claim passes
+    unless it contains clear bug-assertion language (a false positive).
+    Ambiguous reviews (no clean claim, no clear assertion) pass -- erring
+    toward not penalizing, per the v1 scoring policy.
     """
     text = review_text.lower()
+    clean_claim = bool(re.search(
+        r'no (bugs|issues|defects)|code is (clean|correct)|looks (clean|'
+        r'correct)|no (obvious|apparent) (bugs|issues|defects|problems)',
+        text))
+    if fixture.get('class') == 'clean':
+        false_positive = (not clean_claim
+                          and bool(DEFECT_ASSERT_RE.search(text)))
+        return {'term_hits': 0, 'caught': not false_positive,
+                'clean_claim': clean_claim,
+                'false_positive': false_positive}
     hits = sum(1 for t in fixture['match_terms'] if t.lower() in text)
     caught = hits >= max(1, len(fixture['match_terms']) // 2)
-    clean_claim = bool(re.search(r'no (bugs|issues|defects)|code is (clean|correct)',
-                                 text))
     if clean_claim and not caught:
         caught = False
     return {'term_hits': hits, 'caught': caught, 'clean_claim': clean_claim}
@@ -196,9 +237,13 @@ def main():
                          '(127.0.0.1:8769) as it is computed')
     ap.add_argument('--local-only', action='store_true')
     ap.add_argument('--gateway-only', action='store_true')
+    ap.add_argument('--manifest',
+                    default=os.path.join(HERE, 'fixture_manifest.json'),
+                    help='fixture manifest; mined manifests may carry a '
+                         'fixtures_dir pointing into the data store')
     args = ap.parse_args()
 
-    manifest = load_manifest()
+    manifest = load_manifest(args.manifest)
     with open(args.models) as f:
         pool = json.load(f)
 
@@ -219,7 +264,7 @@ def main():
         summary[name] = {'caught': 0, 'missed': 0, 'failed': 0, 'total_lat': 0.0,
                          'cost': 0.0}
         for fx in manifest['fixtures']:
-            code = load_fixture(fx)
+            code = load_fixture(fx, manifest['fixtures_dir'])
             prompt = manifest['prompt_template'].format(code=code)
             rec = {'ts': time.strftime('%Y-%m-%dT%H:%M:%S'),
                    'task_type': 'code_review',
